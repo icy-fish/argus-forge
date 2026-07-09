@@ -1,0 +1,39 @@
+{
+  "name": "@argus-forge/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "predev": "pnpm --filter @argus-forge/shared build",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @argus-forge/shared build",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev --name init",
+    "preseed": "pnpm --filter @argus-forge/shared build",
+    "seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@argus-forge/shared": "workspace:*",
+    "@fastify/cors": "^10.0.1",
+    "@prisma/client": "^5.22.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "prisma": {
+    "seed": "tsx src/seed.ts"
+  }
+}

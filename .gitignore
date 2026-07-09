@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+apps/api/prisma/dev.db
+apps/api/prisma/migrations/
+.vite/
+.turbo/
+logs/
+*.log
