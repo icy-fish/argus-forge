@@ -3,8 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type Metadata = Record<string, JsonValue>;
 type EventStatus = "running" | "completed" | "failed";
-type LogLevel = "debug" | "info" | "warn" | "error";
-type RuntimeLogLevel = "trace" | LogLevel | "fatal" | "silent";
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "silent";
 
 type CommonEvent = {
   eventId: string;
@@ -151,7 +150,7 @@ type Config = {
   maxQueueSize: number;
   maxRetryAttempts: number;
   emitStreamChunks: boolean;
-  logLevel: RuntimeLogLevel;
+  logLevel: LogLevel;
   httpRequestLogDetails: boolean;
 };
 
@@ -182,7 +181,7 @@ const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 const PREVIEW_CHARS = 500;
 const SUMMARY_CHARS = 2000;
 const SECRET_KEY_RE = /(api[_-]?key|authorization|bearer|cookie|credential|password|secret|token)/i;
-const LOG_LEVELS: Record<RuntimeLogLevel, number> = {
+const LOG_LEVELS: Record<LogLevel, number> = {
   trace: 10,
   debug: 20,
   info: 30,
@@ -649,7 +648,7 @@ class EventQueue {
 }
 
 class ExtensionLogger {
-  constructor(private readonly level: RuntimeLogLevel) {}
+  constructor(private readonly level: LogLevel) {}
 
   debug(message: string, data?: Record<string, unknown>): void {
     this.log("debug", message, data);
@@ -659,7 +658,7 @@ class ExtensionLogger {
     this.log("warn", message, data);
   }
 
-  private log(level: Exclude<RuntimeLogLevel, "silent">, message: string, data?: Record<string, unknown>): void {
+  private log(level: Exclude<LogLevel, "silent">, message: string, data?: Record<string, unknown>): void {
     if (LOG_LEVELS[level] < LOG_LEVELS[this.level]) return;
     const suffix = data ? ` ${safeJson(data, 4000)}` : "";
     const line = `[argus-forge] ${message}${suffix}`;
@@ -818,8 +817,8 @@ function readBooleanEnv(value: string | undefined): boolean {
   return value === "1" || value === "true";
 }
 
-function readLogLevel(value: string | undefined, fallback: RuntimeLogLevel): RuntimeLogLevel {
-  return value && value in LOG_LEVELS ? (value as RuntimeLogLevel) : fallback;
+function readLogLevel(value: string | undefined, fallback: LogLevel): LogLevel {
+  return value && value in LOG_LEVELS ? (value as LogLevel) : fallback;
 }
 
 function basename(path: string): string {
