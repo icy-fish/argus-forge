@@ -2,7 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const DEFAULT_REPO = "icy-fish/argus-forge";
@@ -21,6 +22,7 @@ const days = Number(args.days ?? DEFAULT_DAYS);
 const limit = Number(args.limit ?? DEFAULT_LIMIT);
 const dryRun = Boolean(args["dry-run"]);
 const codexModel = args["codex-model"];
+const worktreeRoot = args["worktree-dir"] ?? join(tmpdir(), "argus-forge-codex-worktrees");
 const commands = {
   gh: resolveCommand("gh"),
   codex: resolveCommand("codex"),
@@ -73,73 +75,85 @@ async function main() {
     return;
   }
 
-  ensureCleanWorkingTree();
   ensureLabel(repo, doingLabel);
+  fetchBaseBranch(baseBranch);
 
   for (const summary of issues) {
-    ensureCleanWorkingTree();
-
     const issue = getIssue(repo, summary.number);
     const branch = uniqueBranchName(
       `codex/issue-${issue.number}-${slugify(issue.title)}`,
     );
+    let worktreePath;
 
     console.log(`\nHandling #${issue.number}: ${issue.title}`);
-    checkoutBaseBranch(baseBranch);
-    run("git", ["switch", "-c", branch]);
-
-    const prompt = buildCodexPrompt({ issue, repo, baseBranch });
-
-    console.log("Starting Codex with issue context.");
-    const codexProcess = startCodex(prompt, codexModel);
 
     try {
-      markIssueInProgress(repo, issue.number, doingLabel, assignee);
-    } catch (error) {
-      codexProcess.kill("SIGTERM");
-      throw error;
-    }
+      worktreePath = createIssueWorktree({ baseBranch, branch, issueNumber: issue.number });
+      const prompt = buildCodexPrompt({ issue, repo, baseBranch, worktreePath });
 
-    const codexExitCode = await waitForProcess(codexProcess);
-    if (codexExitCode !== 0) {
-      throw new Error(`Codex failed for #${issue.number} with exit code ${codexExitCode}`);
-    }
+      console.log(`Starting Codex with issue context in ${worktreePath}.`);
+      const codexProcess = startCodex(prompt, codexModel, worktreePath);
 
-    const status = gitStatus();
-    if (!status) {
-      console.log(`Codex made no changes for #${issue.number}; skipping PR creation.`);
-      continue;
-    }
+      try {
+        markIssueInProgress(repo, issue.number, doingLabel, assignee);
+      } catch (error) {
+        codexProcess.kill("SIGTERM");
+        throw error;
+      }
 
-    run("git", ["add", "-A"]);
-    run("git", [
-      "commit",
-      "-m",
-      `Fix #${issue.number}: ${truncate(issue.title, 60)}`,
-      "-m",
-      `Closes #${issue.number}`,
-    ]);
-    run("git", ["push", "-u", "origin", branch]);
-    run("gh", [
-      "pr",
-      "create",
-      "-R",
-      repo,
-      "--base",
-      baseBranch,
-      "--head",
-      branch,
-      "--title",
-      `Fix #${issue.number}: ${issue.title}`,
-      "--body",
-      [
-        `Closes #${issue.number}`,
-        "",
-        `Original issue: ${issue.url}`,
-        "",
-        "Implemented by Codex via the issue handling workflow.",
-      ].join("\n"),
-    ]);
+      const codexExitCode = await waitForProcess(codexProcess);
+      if (codexExitCode !== 0) {
+        throw new Error(`Codex failed for #${issue.number} with exit code ${codexExitCode}`);
+      }
+
+      const status = gitStatus(worktreePath);
+      if (!status) {
+        console.log(`Codex made no changes for #${issue.number}; skipping PR creation.`);
+        continue;
+      }
+
+      run("git", ["add", "-A"], { cwd: worktreePath });
+      run(
+        "git",
+        [
+          "commit",
+          "-m",
+          `Fix #${issue.number}: ${truncate(issue.title, 60)}`,
+          "-m",
+          `Closes #${issue.number}`,
+        ],
+        { cwd: worktreePath },
+      );
+      run("git", ["push", "-u", "origin", branch], { cwd: worktreePath });
+      run(
+        "gh",
+        [
+          "pr",
+          "create",
+          "-R",
+          repo,
+          "--base",
+          baseBranch,
+          "--head",
+          branch,
+          "--title",
+          `Fix #${issue.number}: ${issue.title}`,
+          "--body",
+          [
+            `Closes #${issue.number}`,
+            "",
+            `Original issue: ${issue.url}`,
+            "",
+            "Implemented by Codex via the issue handling workflow.",
+          ].join("\n"),
+        ],
+        { cwd: worktreePath },
+      );
+    } finally {
+      if (worktreePath) {
+        removeIssueWorktree(worktreePath);
+      }
+    }
   }
 }
 
@@ -177,7 +191,7 @@ function getIssue(repo, number) {
   return JSON.parse(stdout);
 }
 
-function buildCodexPrompt({ issue, repo, baseBranch }) {
+function buildCodexPrompt({ issue, repo, baseBranch, worktreePath }) {
   const comments = issue.comments
     .map(
       (comment, index) =>
@@ -199,6 +213,7 @@ function buildCodexPrompt({ issue, repo, baseBranch }) {
     "",
     `Repository: ${repo}`,
     `Base branch: ${baseBranch}`,
+    `Worktree: ${worktreePath}`,
     `Issue: #${issue.number}`,
     `URL: ${issue.url}`,
     `Title: ${issue.title}`,
@@ -216,11 +231,11 @@ function buildCodexPrompt({ issue, repo, baseBranch }) {
   ].join("\n");
 }
 
-function startCodex(prompt, model) {
+function startCodex(prompt, model, cwd) {
   const codexArgs = [
     "exec",
     "--cd",
-    process.cwd(),
+    cwd,
     "--sandbox",
     "workspace-write",
     "--ask-for-approval",
@@ -234,7 +249,7 @@ function startCodex(prompt, model) {
   codexArgs.push("-");
 
   const child = spawn(commands.codex.file, [...commands.codex.argsPrefix, ...codexArgs], {
-    cwd: process.cwd(),
+    cwd,
     stdio: ["pipe", "inherit", "inherit"],
     shell: false,
   });
@@ -295,32 +310,28 @@ function getDefaultBranch(repo) {
   return stdout.trim();
 }
 
-function ensureCleanWorkingTree() {
-  const status = gitStatus();
-  if (status) {
-    throw new Error(
-      [
-        "Working tree is not clean. Commit, stash, or remove local changes before running this workflow.",
-        status,
-      ].join("\n"),
-    );
-  }
-}
-
-function checkoutBaseBranch(baseBranch) {
+function fetchBaseBranch(baseBranch) {
   run("git", ["fetch", "origin", baseBranch]);
-
-  try {
-    run("git", ["switch", baseBranch]);
-  } catch {
-    run("git", ["switch", "--track", `origin/${baseBranch}`]);
-  }
-
-  run("git", ["pull", "--ff-only", "origin", baseBranch]);
 }
 
-function gitStatus() {
-  return run("git", ["status", "--porcelain"]).trim();
+function createIssueWorktree({ baseBranch, branch, issueNumber }) {
+  mkdirSync(worktreeRoot, { recursive: true });
+  const worktreePath = mkdtempSync(join(worktreeRoot, `issue-${issueNumber}-`));
+  run("git", ["worktree", "add", "-b", branch, worktreePath, `origin/${baseBranch}`]);
+  return worktreePath;
+}
+
+function removeIssueWorktree(worktreePath) {
+  try {
+    run("git", ["worktree", "remove", "--force", worktreePath], { stdio: "ignore" });
+  } catch {
+    rmSync(worktreePath, { recursive: true, force: true });
+    run("git", ["worktree", "prune"], { stdio: "ignore" });
+  }
+}
+
+function gitStatus(cwd = process.cwd()) {
+  return run("git", ["status", "--porcelain"], { cwd }).trim();
 }
 
 function uniqueBranchName(baseName) {
@@ -368,7 +379,7 @@ function run(command, commandArgs, options = {}) {
   const commandSpec = commands[command] ?? { file: command, argsPrefix: [] };
 
   return execFileSync(commandSpec.file, [...commandSpec.argsPrefix, ...commandArgs], {
-    cwd: process.cwd(),
+    cwd: options.cwd ?? process.cwd(),
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
     stdio: options.stdio ?? ["ignore", "pipe", "inherit"],

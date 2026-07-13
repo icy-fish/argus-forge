@@ -23,7 +23,7 @@ pnpm build
 
 ## GitHub Issue Handling Workflow
 
-Run the Codex issue workflow from a clean working tree:
+Run the Codex issue workflow:
 
 ```bash
 pnpm issues:codex
@@ -32,9 +32,12 @@ pnpm issues:codex
 The workflow uses the local `gh`, `codex`, and `git` commands to:
 
 1. find open issues in `icy-fish/argus-forge` created in the last 14 days by `icy-fish` with no assignees and no labels;
-2. send each issue description and comments to `codex exec`;
-3. label the issue `doing` and assign it to `icy-fish`;
-4. commit Codex changes to an issue branch, push it, and open a PR that references the issue.
+2. create a clean temporary Git worktree for each issue;
+3. send each issue description and comments to `codex exec`;
+4. label the issue `doing` and assign it to `icy-fish`;
+5. commit Codex changes to an issue branch, push it, and open a PR that references the issue.
+
+Local changes in the main checkout are ignored because issue implementation happens in isolated worktrees under the system temp directory by default.
 
 Preview matching issues without changing GitHub or git state:
 
@@ -45,7 +48,7 @@ pnpm issues:codex -- --dry-run
 Useful options:
 
 ```bash
-pnpm issues:codex -- --days 7 --limit 20 --base main --codex-model gpt-5
+pnpm issues:codex -- --days 7 --limit 20 --base main --codex-model gpt-5 --worktree-dir D:\tmp\argus-forge-worktrees
 ```
 
 Useful API checks:
