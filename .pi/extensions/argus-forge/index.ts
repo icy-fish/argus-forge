@@ -145,8 +145,10 @@ type Config = {
   projectId: string;
   projectName: string;
   flushIntervalMs: number;
+  flushTimeoutMs: number;
   batchSize: number;
   maxQueueSize: number;
+  maxRetryAttempts: number;
   emitStreamChunks: boolean;
 };
 
@@ -172,6 +174,8 @@ const DEFAULT_INGEST_URL = "http://localhost:4000/v1/ingest/events";
 const MAX_BATCH_SIZE = 500;
 const DEFAULT_FLUSH_INTERVAL_MS = 1000;
 const DEFAULT_MAX_QUEUE_SIZE = 5000;
+const DEFAULT_FLUSH_TIMEOUT_MS = 2000;
+const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 const PREVIEW_CHARS = 500;
 const SUMMARY_CHARS = 2000;
 const SECRET_KEY_RE = /(api[_-]?key|authorization|bearer|cookie|credential|password|secret|token)/i;
@@ -551,6 +555,8 @@ class EventQueue {
   private readonly timer: ReturnType<typeof setInterval>;
   private flushing = false;
   private retryDelayMs = 500;
+  private retryAttempts = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly config: Config) {
     this.timer = setInterval(() => {
@@ -571,28 +577,78 @@ class EventQueue {
     if (this.flushing || this.queue.length === 0) return;
     this.flushing = true;
     const batch = this.queue.splice(0, this.config.batchSize);
+    const timeout = withTimeoutSignal(signal, this.config.flushTimeoutMs);
     try {
       const response = await fetch(this.config.ingestUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ events: batch }),
-        signal
+        signal: timeout.signal
       });
       if (!response.ok) throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+      }
+      this.retryAttempts = 0;
       this.retryDelayMs = 500;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.retryAttempts += 1;
+
+      if (this.retryAttempts > this.config.maxRetryAttempts) {
+        console.warn(
+          `[argus-forge] failed to flush telemetry after ${this.config.maxRetryAttempts} attempts; dropping ${batch.length} event(s): ${message}`
+        );
+        this.retryAttempts = 0;
+        this.retryDelayMs = 500;
+        return;
+      }
+
       this.queue.unshift(...batch);
       while (this.queue.length > this.config.maxQueueSize) this.queue.shift();
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[argus-forge] failed to flush telemetry: ${message}`);
-      setTimeout(() => {
-        void this.flush();
-      }, this.retryDelayMs).unref?.();
-      this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000);
+      console.warn(
+        `[argus-forge] failed to flush telemetry (attempt ${this.retryAttempts}/${this.config.maxRetryAttempts}): ${message}`
+      );
+      this.scheduleRetry();
     } finally {
+      timeout.dispose();
       this.flushing = false;
     }
   }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.flush();
+    }, this.retryDelayMs);
+    this.retryTimer.unref?.();
+    this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000);
+  }
+}
+
+function withTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`Argus Forge ingest timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const abort = (): void => controller.abort(signal?.reason);
+
+  timeout.unref?.();
+  if (signal?.aborted) {
+    abort();
+  } else {
+    signal?.addEventListener("abort", abort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    }
+  };
 }
 
 function on(pi: PiLike, name: HookName, handler: HookHandler): void {
@@ -616,8 +672,10 @@ function readConfig(cwd: string): Config {
     projectId: process.env.ARGUS_FORGE_PROJECT_ID || slug(cwd),
     projectName: process.env.ARGUS_FORGE_PROJECT_NAME || basename(cwd),
     flushIntervalMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS),
+    flushTimeoutMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_TIMEOUT_MS, DEFAULT_FLUSH_TIMEOUT_MS),
     batchSize: Math.min(readPositiveInt(process.env.ARGUS_FORGE_BATCH_SIZE, 100), MAX_BATCH_SIZE),
     maxQueueSize: readPositiveInt(process.env.ARGUS_FORGE_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE),
+    maxRetryAttempts: readPositiveInt(process.env.ARGUS_FORGE_MAX_RETRY_ATTEMPTS, DEFAULT_MAX_RETRY_ATTEMPTS),
     emitStreamChunks: process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS === "1" || process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS === "true"
   };
 }
