@@ -160,8 +160,10 @@ Optional settings:
 - `ARGUS_FORGE_PROJECT_ID`: project id, default is a slug from the current working directory.
 - `ARGUS_FORGE_PROJECT_NAME`: project display name, default is the current directory name.
 - `ARGUS_FORGE_FLUSH_INTERVAL_MS`: queue flush interval, default `1000`.
+- `ARGUS_FORGE_FLUSH_TIMEOUT_MS`: per-request ingest timeout, default `2000`.
 - `ARGUS_FORGE_BATCH_SIZE`: max events per POST, default `100` and capped at `500`.
 - `ARGUS_FORGE_MAX_QUEUE_SIZE`: bounded in-memory queue length while the API is unavailable, default `5000`.
+- `ARGUS_FORGE_MAX_RETRY_ATTEMPTS`: retry attempts before dropping an undeliverable batch, default `3`.
 - `ARGUS_FORGE_EMIT_STREAM_CHUNKS`: set to `1` or `true` to emit throttled `llm.stream.chunk` previews; disabled by default to keep local SQLite volume low.
 
 The extension sends `{ "events": [...] }` only to `POST /v1/ingest/events`. It redacts common secret-shaped fields and stores truncated previews for prompts, tool arguments, and tool results. The API remains unauthenticated, so run it only in a trusted local environment or behind your own access controls.
