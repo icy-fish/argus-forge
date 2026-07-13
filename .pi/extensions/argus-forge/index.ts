@@ -4,6 +4,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 type Metadata = Record<string, JsonValue>;
 type EventStatus = "running" | "completed" | "failed";
 type LogLevel = "debug" | "info" | "warn" | "error";
+type RuntimeLogLevel = "trace" | LogLevel | "fatal" | "silent";
 
 type CommonEvent = {
   eventId: string;
@@ -150,6 +151,8 @@ type Config = {
   maxQueueSize: number;
   maxRetryAttempts: number;
   emitStreamChunks: boolean;
+  logLevel: RuntimeLogLevel;
+  httpRequestLogDetails: boolean;
 };
 
 type LlmRequestState = {
@@ -179,6 +182,15 @@ const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 const PREVIEW_CHARS = 500;
 const SUMMARY_CHARS = 2000;
 const SECRET_KEY_RE = /(api[_-]?key|authorization|bearer|cookie|credential|password|secret|token)/i;
+const LOG_LEVELS: Record<RuntimeLogLevel, number> = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+  silent: Number.POSITIVE_INFINITY
+};
 
 export default function argusForgePiExtension(pi: ExtensionAPI): void {
   const piRuntime = pi as PiLike;
@@ -553,12 +565,14 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
 class EventQueue {
   private readonly queue: ArgusEvent[] = [];
   private readonly timer: ReturnType<typeof setInterval>;
+  private readonly logger: ExtensionLogger;
   private flushing = false;
   private retryDelayMs = 500;
   private retryAttempts = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly config: Config) {
+    this.logger = new ExtensionLogger(config.logLevel);
     this.timer = setInterval(() => {
       void this.flush();
     }, config.flushIntervalMs);
@@ -578,13 +592,21 @@ class EventQueue {
     this.flushing = true;
     const batch = this.queue.splice(0, this.config.batchSize);
     const timeout = withTimeoutSignal(signal, this.config.flushTimeoutMs);
+    const headers = { "content-type": "application/json" };
+    const body = JSON.stringify({ events: batch });
     try {
+      if (this.config.httpRequestLogDetails) {
+        this.logger.debug("ingest http request", { url: this.config.ingestUrl, headers, body });
+      }
       const response = await fetch(this.config.ingestUrl, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ events: batch }),
+        headers,
+        body,
         signal: timeout.signal
       });
+      if (this.config.httpRequestLogDetails) {
+        this.logger.debug("ingest http response", { url: this.config.ingestUrl, status: response.status, ok: response.ok });
+      }
       if (!response.ok) throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
       if (this.retryTimer) {
         clearTimeout(this.retryTimer);
@@ -597,8 +619,8 @@ class EventQueue {
       this.retryAttempts += 1;
 
       if (this.retryAttempts > this.config.maxRetryAttempts) {
-        console.warn(
-          `[argus-forge] failed to flush telemetry after ${this.config.maxRetryAttempts} attempts; dropping ${batch.length} event(s): ${message}`
+        this.logger.warn(
+          `failed to flush telemetry after ${this.config.maxRetryAttempts} attempts; dropping ${batch.length} event(s): ${message}`
         );
         this.retryAttempts = 0;
         this.retryDelayMs = 500;
@@ -607,9 +629,7 @@ class EventQueue {
 
       this.queue.unshift(...batch);
       while (this.queue.length > this.config.maxQueueSize) this.queue.shift();
-      console.warn(
-        `[argus-forge] failed to flush telemetry (attempt ${this.retryAttempts}/${this.config.maxRetryAttempts}): ${message}`
-      );
+      this.logger.warn(`failed to flush telemetry (attempt ${this.retryAttempts}/${this.config.maxRetryAttempts}): ${message}`);
       this.scheduleRetry();
     } finally {
       timeout.dispose();
@@ -625,6 +645,27 @@ class EventQueue {
     }, this.retryDelayMs);
     this.retryTimer.unref?.();
     this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000);
+  }
+}
+
+class ExtensionLogger {
+  constructor(private readonly level: RuntimeLogLevel) {}
+
+  debug(message: string, data?: Record<string, unknown>): void {
+    this.log("debug", message, data);
+  }
+
+  warn(message: string, data?: Record<string, unknown>): void {
+    this.log("warn", message, data);
+  }
+
+  private log(level: Exclude<RuntimeLogLevel, "silent">, message: string, data?: Record<string, unknown>): void {
+    if (LOG_LEVELS[level] < LOG_LEVELS[this.level]) return;
+    const suffix = data ? ` ${safeJson(data, 4000)}` : "";
+    const line = `[argus-forge] ${message}${suffix}`;
+    if (level === "error" || level === "fatal") console.error(line);
+    else if (level === "warn") console.warn(line);
+    else console.log(line);
   }
 }
 
@@ -676,7 +717,9 @@ function readConfig(cwd: string): Config {
     batchSize: Math.min(readPositiveInt(process.env.ARGUS_FORGE_BATCH_SIZE, 100), MAX_BATCH_SIZE),
     maxQueueSize: readPositiveInt(process.env.ARGUS_FORGE_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE),
     maxRetryAttempts: readPositiveInt(process.env.ARGUS_FORGE_MAX_RETRY_ATTEMPTS, DEFAULT_MAX_RETRY_ATTEMPTS),
-    emitStreamChunks: process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS === "1" || process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS === "true"
+    emitStreamChunks: readBooleanEnv(process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS),
+    logLevel: readLogLevel(process.env.ARGUS_FORGE_LOG_LEVEL, "warn"),
+    httpRequestLogDetails: readBooleanEnv(process.env.ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS)
   };
 }
 
@@ -769,6 +812,14 @@ function truncate(value: string, maxChars: number): string {
 function readPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readBooleanEnv(value: string | undefined): boolean {
+  return value === "1" || value === "true";
+}
+
+function readLogLevel(value: string | undefined, fallback: RuntimeLogLevel): RuntimeLogLevel {
+  return value && value in LOG_LEVELS ? (value as RuntimeLogLevel) : fallback;
 }
 
 function basename(path: string): string {

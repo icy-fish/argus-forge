@@ -14,6 +14,8 @@ pnpm dev
 
 The API listens on `http://localhost:4000` and the dashboard runs on `http://localhost:5173`.
 
+API logging defaults to `API_LOG_LEVEL=info` with detailed HTTP request logging disabled. To trace request URL, headers, and body while debugging locally, set `API_LOG_LEVEL=debug` and `API_HTTP_REQUEST_LOG_DETAILS=true`.
+
 ## Verification
 
 ```bash
@@ -165,6 +167,8 @@ Optional settings:
 - `ARGUS_FORGE_MAX_QUEUE_SIZE`: bounded in-memory queue length while the API is unavailable, default `5000`.
 - `ARGUS_FORGE_MAX_RETRY_ATTEMPTS`: retry attempts before dropping an undeliverable batch, default `3`.
 - `ARGUS_FORGE_EMIT_STREAM_CHUNKS`: set to `1` or `true` to emit throttled `llm.stream.chunk` previews; disabled by default to keep local SQLite volume low.
+- `ARGUS_FORGE_LOG_LEVEL`: extension log level, default `warn`; supported values are `trace`, `debug`, `info`, `warn`, `error`, `fatal`, and `silent`.
+- `ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS`: set to `1` or `true` to log ingest request URL, headers, and body at `debug` level; disabled by default.
 
 The extension sends `{ "events": [...] }` only to `POST /v1/ingest/events`. It redacts common secret-shaped fields and stores truncated previews for prompts, tool arguments, and tool results. The API remains unauthenticated, so run it only in a trusted local environment or behind your own access controls.
 
