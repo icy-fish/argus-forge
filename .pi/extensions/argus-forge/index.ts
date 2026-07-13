@@ -551,6 +551,8 @@ class EventQueue {
   private readonly timer: ReturnType<typeof setInterval>;
   private flushing = false;
   private retryDelayMs = 500;
+  private nextRetryAt = 0;
+  private warnedDuringOutage = false;
 
   constructor(private readonly config: Config) {
     this.timer = setInterval(() => {
@@ -569,6 +571,7 @@ class EventQueue {
 
   async flush(signal?: AbortSignal): Promise<void> {
     if (this.flushing || this.queue.length === 0) return;
+    if (Date.now() < this.nextRetryAt) return;
     this.flushing = true;
     const batch = this.queue.splice(0, this.config.batchSize);
     try {
@@ -580,14 +583,17 @@ class EventQueue {
       });
       if (!response.ok) throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
       this.retryDelayMs = 500;
+      this.nextRetryAt = 0;
+      this.warnedDuringOutage = false;
     } catch (error) {
       this.queue.unshift(...batch);
       while (this.queue.length > this.config.maxQueueSize) this.queue.shift();
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[argus-forge] failed to flush telemetry: ${message}`);
-      setTimeout(() => {
-        void this.flush();
-      }, this.retryDelayMs).unref?.();
+      if (!this.warnedDuringOutage) {
+        console.warn(`[argus-forge] failed to flush telemetry: ${message}; telemetry will retry in the background`);
+        this.warnedDuringOutage = true;
+      }
+      this.nextRetryAt = Date.now() + this.retryDelayMs;
       this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000);
     } finally {
       this.flushing = false;
