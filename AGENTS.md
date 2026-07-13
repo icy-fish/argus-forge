@@ -9,6 +9,7 @@ Argus Forge is a pnpm TypeScript workspace for a local observability MVP for cod
 - `apps/api`: Fastify API backed by Prisma and SQLite.
 - `apps/web`: React/Vite dashboard for sessions, timelines, and metrics.
 - `packages/shared`: Shared event schemas, API types, and cost helpers.
+- `.pi/extensions/argus-forge`: Project-local Pi extension that translates Pi telemetry into Argus Forge ingest events.
 
 ## Working Rules
 
@@ -16,6 +17,7 @@ Argus Forge is a pnpm TypeScript workspace for a local observability MVP for cod
 - Keep changes scoped to the package that owns the behavior.
 - Prefer shared schemas and types from `@argus-forge/shared` over duplicating contracts in app packages.
 - Build `@argus-forge/shared` before running API code that imports its built output.
+- Keep the Pi extension self-contained; it mirrors the shared event contract locally because Pi may run it outside the workspace build output.
 - Do not commit local `.env` files, SQLite databases, generated build output, or dependency folders.
 
 ## Common Commands
@@ -43,6 +45,7 @@ Package-level checks:
 pnpm --filter @argus-forge/shared build
 pnpm --filter @argus-forge/api test
 pnpm --filter @argus-forge/web build
+pnpm typecheck:pi-extension
 ```
 
 ## Runtime Notes
@@ -63,12 +66,14 @@ pnpm --filter @argus-forge/web build
 - Web pages live in `apps/web/src/pages`.
 - Reusable web components live in `apps/web/src/components`.
 - Shared contracts live in `packages/shared/src`.
+- Pi extension source lives in `.pi/extensions/argus-forge/index.ts`.
 
 ## Testing and Validation
 
 - API tests use Vitest via `pnpm --filter @argus-forge/api test`.
 - TypeScript `lint` scripts currently run `tsc --noEmit`; there is no separate ESLint setup.
 - Run `pnpm build` before handing off changes that touch shared contracts, API behavior, or web build paths.
+- Run `pnpm typecheck:pi-extension` for changes under `.pi/extensions/argus-forge`.
 - For database-related changes, run Prisma generation/migration commands through the API package scripts.
 
 ## Data Contract Notes
