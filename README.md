@@ -21,6 +21,33 @@ pnpm test
 pnpm build
 ```
 
+## GitHub Issue Handling Workflow
+
+Run the Codex issue workflow from a clean working tree:
+
+```bash
+pnpm issues:codex
+```
+
+The workflow uses the local `gh`, `codex`, and `git` commands to:
+
+1. find open issues in `icy-fish/argus-forge` created in the last 14 days by `icy-fish` with no assignees and no labels;
+2. send each issue description and comments to `codex exec`;
+3. label the issue `doing` and assign it to `icy-fish`;
+4. commit Codex changes to an issue branch, push it, and open a PR that references the issue.
+
+Preview matching issues without changing GitHub or git state:
+
+```bash
+pnpm issues:codex -- --dry-run
+```
+
+Useful options:
+
+```bash
+pnpm issues:codex -- --days 7 --limit 20 --base main --codex-model gpt-5
+```
+
 Useful API checks:
 
 ```bash
