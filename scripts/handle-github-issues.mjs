@@ -238,8 +238,6 @@ function startCodex(prompt, model, cwd) {
     cwd,
     "--sandbox",
     "workspace-write",
-    "--ask-for-approval",
-    "never",
   ];
 
   if (model) {
