@@ -102,6 +102,40 @@ Supported event types are `session.started`, `session.updated`, `llm.request.sta
 
 Duplicate `eventId` values are treated as no-ops and do not create duplicate raw events, spans, request rows, tool calls, or usage metrics.
 
+## Pi Extension
+
+This repo includes a project-local Pi extension at `.pi/extensions/argus-forge/index.ts`. After the project is trusted, Pi can auto-discover the extension and send session, LLM, model, and tool telemetry to the Argus Forge ingestion API.
+
+By default, the extension posts batches to:
+
+```bash
+http://localhost:4000/v1/ingest/events
+```
+
+Override the target endpoint when the API runs elsewhere:
+
+```bash
+ARGUS_FORGE_INGEST_URL=http://localhost:4000/v1/ingest/events pi
+```
+
+If you do not want auto-discovery, run Pi with the extension explicitly:
+
+```bash
+ARGUS_FORGE_INGEST_URL=http://localhost:4000/v1/ingest/events pi -e ./.pi/extensions/argus-forge/index.ts
+```
+
+Optional settings:
+
+- `ARGUS_FORGE_AGENT_NAME`: agent name stored on events, default `pi`.
+- `ARGUS_FORGE_PROJECT_ID`: project id, default is a slug from the current working directory.
+- `ARGUS_FORGE_PROJECT_NAME`: project display name, default is the current directory name.
+- `ARGUS_FORGE_FLUSH_INTERVAL_MS`: queue flush interval, default `1000`.
+- `ARGUS_FORGE_BATCH_SIZE`: max events per POST, default `100` and capped at `500`.
+- `ARGUS_FORGE_MAX_QUEUE_SIZE`: bounded in-memory queue length while the API is unavailable, default `5000`.
+- `ARGUS_FORGE_EMIT_STREAM_CHUNKS`: set to `1` or `true` to emit throttled `llm.stream.chunk` previews; disabled by default to keep local SQLite volume low.
+
+The extension sends `{ "events": [...] }` only to `POST /v1/ingest/events`. It redacts common secret-shaped fields and stores truncated previews for prompts, tool arguments, and tool results. The API remains unauthenticated, so run it only in a trusted local environment or behind your own access controls.
+
 ## Dashboard
 
 Open `http://localhost:5173` for aggregate metrics and charts. Use `/sessions` to browse runs, then open a session detail page for per-session metrics, nested spans, and raw event JSON.
