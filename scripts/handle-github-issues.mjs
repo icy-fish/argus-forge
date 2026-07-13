@@ -280,9 +280,20 @@ function markIssueInProgress(repo, number, label, assignee) {
 }
 
 function ensureLabel(repo, label) {
-  try {
-    run("gh", ["label", "view", label, "-R", repo], { stdio: "ignore" });
-  } catch {
+  const stdout = run("gh", [
+    "label",
+    "list",
+    "-R",
+    repo,
+    "--search",
+    label,
+    "--json",
+    "name",
+  ]);
+  const labels = JSON.parse(stdout);
+  const exists = labels.some((candidate) => candidate.name === label);
+
+  if (!exists) {
     run("gh", [
       "label",
       "create",
