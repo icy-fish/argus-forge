@@ -8,8 +8,6 @@ import SessionsPage from "./pages/SessionsPage";
 import SessionDetailPage from "./pages/SessionDetailPage";
 import "./styles.css";
 
-const API_REFRESH_INTERVAL_MS = 5000;
-
 const router = createBrowserRouter([
   {
     path: "/",
@@ -25,10 +23,8 @@ const router = createBrowserRouter([
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: API_REFRESH_INTERVAL_MS,
       refetchOnReconnect: false,
-      refetchOnWindowFocus: false,
-      staleTime: API_REFRESH_INTERVAL_MS
+      refetchOnWindowFocus: false
     }
   }
 });
