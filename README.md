@@ -146,29 +146,34 @@ http://localhost:4000/v1/ingest/events
 
 Override the target endpoint when the API runs elsewhere:
 
-```bash
-ARGUS_FORGE_INGEST_URL=http://localhost:4000/v1/ingest/events pi
+```json
+{
+  "ingestUrl": "http://localhost:4000/v1/ingest/events"
+}
 ```
+
+Save persistent settings as `.pi/extensions/argus-forge/argus-forge.settings.json`. A full example is available at `.pi/extensions/argus-forge/argus-forge.settings.example.json`. Environment variables still override the settings file for one-off runs.
 
 If you do not want auto-discovery, run Pi with the extension explicitly:
 
 ```bash
-ARGUS_FORGE_INGEST_URL=http://localhost:4000/v1/ingest/events pi -e ./.pi/extensions/argus-forge/index.ts
+pi -e ./.pi/extensions/argus-forge/index.ts
 ```
 
 Optional settings:
 
-- `ARGUS_FORGE_AGENT_NAME`: agent name stored on events, default `pi`.
-- `ARGUS_FORGE_PROJECT_ID`: project id, default is a slug from the current working directory.
-- `ARGUS_FORGE_PROJECT_NAME`: project display name, default is the current directory name.
-- `ARGUS_FORGE_FLUSH_INTERVAL_MS`: queue flush interval, default `1000`.
-- `ARGUS_FORGE_FLUSH_TIMEOUT_MS`: per-request ingest timeout, default `2000`.
-- `ARGUS_FORGE_BATCH_SIZE`: max events per POST, default `100` and capped at `500`.
-- `ARGUS_FORGE_MAX_QUEUE_SIZE`: bounded in-memory queue length while the API is unavailable, default `5000`.
-- `ARGUS_FORGE_MAX_RETRY_ATTEMPTS`: retry attempts before dropping an undeliverable batch, default `3`.
-- `ARGUS_FORGE_EMIT_STREAM_CHUNKS`: set to `1` or `true` to emit throttled `llm.stream.chunk` previews; disabled by default to keep local SQLite volume low.
-- `ARGUS_FORGE_LOG_LEVEL`: extension log level, default `warn`; supported values are `trace`, `debug`, `info`, `warn`, `error`, `fatal`, and `silent`.
-- `ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS`: set to `1` or `true` to log ingest request URL, headers, and body at `debug` level; disabled by default.
+- `ingestUrl` / `ARGUS_FORGE_INGEST_URL`: ingest endpoint, default `http://localhost:4000/v1/ingest/events`.
+- `agentName` / `ARGUS_FORGE_AGENT_NAME`: agent name stored on events, default `pi`.
+- `projectId` / `ARGUS_FORGE_PROJECT_ID`: project id, default is a slug from the current working directory.
+- `projectName` / `ARGUS_FORGE_PROJECT_NAME`: project display name, default is the current directory name.
+- `flushIntervalMs` / `ARGUS_FORGE_FLUSH_INTERVAL_MS`: queue flush interval, default `1000`.
+- `flushTimeoutMs` / `ARGUS_FORGE_FLUSH_TIMEOUT_MS`: per-request ingest timeout, default `2000`.
+- `batchSize` / `ARGUS_FORGE_BATCH_SIZE`: max events per POST, default `100` and capped at `500`.
+- `maxQueueSize` / `ARGUS_FORGE_MAX_QUEUE_SIZE`: bounded in-memory queue length while the API is unavailable, default `5000`.
+- `maxRetryAttempts` / `ARGUS_FORGE_MAX_RETRY_ATTEMPTS`: retry attempts before dropping an undeliverable batch, default `3`.
+- `emitStreamChunks` / `ARGUS_FORGE_EMIT_STREAM_CHUNKS`: set to `true` in JSON or `1`/`true` in the environment to emit throttled `llm.stream.chunk` previews; disabled by default to keep local SQLite volume low.
+- `logLevel` / `ARGUS_FORGE_LOG_LEVEL`: extension log level, default `warn`; supported values are `trace`, `debug`, `info`, `warn`, `error`, `fatal`, and `silent`.
+- `httpRequestLogDetails` / `ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS`: set to `true` in JSON or `1`/`true` in the environment to log ingest request URL, headers, and body at `debug` level; disabled by default.
 
 The extension sends `{ "events": [...] }` only to `POST /v1/ingest/events`. It redacts common secret-shaped fields and stores truncated previews for prompts, tool arguments, and tool results. The API remains unauthenticated, so run it only in a trusted local environment or behind your own access controls.
 

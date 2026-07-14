@@ -1,0 +1,14 @@
+{
+  "ingestUrl": "http://localhost:4000/v1/ingest/events",
+  "agentName": "pi",
+  "projectId": "",
+  "projectName": "",
+  "flushIntervalMs": 1000,
+  "flushTimeoutMs": 2000,
+  "batchSize": 100,
+  "maxQueueSize": 5000,
+  "maxRetryAttempts": 3,
+  "emitStreamChunks": false,
+  "logLevel": "warn",
+  "httpRequestLogDetails": false
+}
