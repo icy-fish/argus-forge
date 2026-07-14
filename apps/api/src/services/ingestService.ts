@@ -8,6 +8,24 @@ function jsonText(value: unknown): string | undefined {
   return value == null ? undefined : JSON.stringify(value);
 }
 
+function parseJsonText(value: string | null | undefined): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function mergeMetadata(existing: string | null | undefined, next: unknown): string | undefined {
+  if (next == null) return undefined;
+  const previous = parseJsonText(existing);
+  if (previous && typeof previous === "object" && !Array.isArray(previous) && typeof next === "object" && !Array.isArray(next)) {
+    return jsonText({ ...previous, ...next });
+  }
+  return jsonText(next);
+}
+
 function eventSpanId(event: AgentEvent): string {
   return event.spanId ?? `${event.sessionId}:${event.type}:${"requestId" in event && event.requestId ? event.requestId : "callId" in event && event.callId ? event.callId : event.eventId}`;
 }
@@ -211,7 +229,7 @@ export class IngestService {
       finishReason: "finishReason" in event ? event.finishReason : undefined,
       errorCode: "errorCode" in event ? event.errorCode : undefined,
       errorMessage: "errorMessage" in event ? event.errorMessage : undefined,
-      metadata: "requestMetadata" in event ? jsonText(event.requestMetadata) : undefined
+      metadata: "requestMetadata" in event ? mergeMetadata(existing?.metadata, event.requestMetadata) : undefined
     };
 
     const llm = await tx.llmRequest.upsert({

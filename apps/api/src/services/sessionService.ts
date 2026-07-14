@@ -94,6 +94,7 @@ export class SessionService {
         completionTokens: span.llmRequest?.completionTokens,
         totalTokens: span.llmRequest?.totalTokens,
         estimatedCostUsd: span.llmRequest?.estimatedCostUsd,
+        requestMetadata: parseJsonText(span.llmRequest?.metadata ?? null),
         errorMessage: span.errorMessage ?? span.llmRequest?.errorMessage ?? span.toolCall?.errorMessage,
         events: span.agentEvents.map((event) => ({
           id: event.id,

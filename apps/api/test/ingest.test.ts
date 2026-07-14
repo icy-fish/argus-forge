@@ -40,4 +40,28 @@ describe("ingestion", () => {
     expect(llm.latencyMs).toBe(1200);
     expect(llm.totalTokens).toBe(150);
   });
+
+  it("merges request metadata across LLM lifecycle events", async () => {
+    await service.ingestEvents([
+      event({
+        type: "llm.request.started",
+        eventId: "start",
+        status: "running",
+        promptTokens: undefined,
+        completionTokens: undefined,
+        latencyMs: undefined,
+        requestMetadata: { requestPreview: { messages: [{ role: "user", content: "hello" }] } }
+      }),
+      event({
+        eventId: "done",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        requestMetadata: { responsePreview: { content: "hi" } }
+      })
+    ]);
+    const llm = await prisma.llmRequest.findUniqueOrThrow({ where: { spanId: "span-1" } });
+    expect(JSON.parse(llm.metadata ?? "{}")).toEqual({
+      requestPreview: { messages: [{ role: "user", content: "hello" }] },
+      responsePreview: { content: "hi" }
+    });
+  });
 });

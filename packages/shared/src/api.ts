@@ -57,6 +57,7 @@ export type TraceSpan = {
   completionTokens?: number;
   totalTokens?: number;
   estimatedCostUsd?: number | null;
+  requestMetadata?: unknown;
   errorMessage?: string | null;
   events: TimelineEvent[];
   children: TraceSpan[];
