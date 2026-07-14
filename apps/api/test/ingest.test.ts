@@ -30,6 +30,37 @@ describe("ingestion", () => {
     await expect(service.ingestSingle({ type: "llm.request.completed" })).rejects.toThrow();
   });
 
+  it("accepts tool summaries longer than 2,000 characters", async () => {
+    const summary = "x".repeat(2_001);
+    const result = await service.ingestSingle(
+      event({
+        type: "tool.call.completed",
+        toolName: "shell_command",
+        status: "completed",
+        argumentsSummary: summary,
+        resultSummary: summary
+      } as never)
+    );
+
+    expect(result.inserted).toBe(1);
+    const toolCall = await prisma.toolCall.findUniqueOrThrow({ where: { spanId: "span-1" } });
+    expect(toolCall.argumentsSummary).toHaveLength(2_001);
+    expect(toolCall.resultSummary).toHaveLength(2_001);
+  });
+
+  it("rejects tool summaries larger than 1 MB", async () => {
+    await expect(
+      service.ingestSingle(
+        event({
+          type: "tool.call.completed",
+          toolName: "shell_command",
+          status: "completed",
+          argumentsSummary: "x".repeat(1_000_001)
+        } as never)
+      )
+    ).rejects.toThrow();
+  });
+
   it("pairs start and completion lifecycle events", async () => {
     await service.ingestEvents([
       event({ type: "llm.request.started", eventId: "start", status: "running", promptTokens: undefined, completionTokens: undefined, latencyMs: undefined }),
