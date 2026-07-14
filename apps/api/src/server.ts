@@ -11,16 +11,43 @@ export async function buildServer() {
     disableRequestLogging: true,
     logger: {
       level: config.API_LOG_LEVEL,
-      redact: ["req.headers.authorization", "req.headers.cookie", "req.body.authorization", "req.body.apiKey", "req.body.token"]
+      redact: [
+        "httpRequest.headers.authorization",
+        "httpRequest.headers.cookie",
+        "httpRequest.body.authorization",
+        "httpRequest.body.apiKey",
+        "httpRequest.body.token"
+      ]
     }
   });
 
   if (config.API_HTTP_REQUEST_LOG_DETAILS) {
     app.addHook("preHandler", async (request) => {
-      request.log.debug({ req: { method: request.method, url: request.url, headers: request.headers, body: request.body } }, "http request");
+      request.log.debug(
+        {
+          httpRequest: {
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body: request.body
+          }
+        },
+        "http request"
+      );
     });
-    app.addHook("onResponse", async (request, reply) => {
-      request.log.debug({ statusCode: reply.statusCode, responseTimeMs: reply.elapsedTime }, "http response");
+    app.addHook("onSend", async (request, reply, payload) => {
+      request.log.debug(
+        {
+          httpResponse: {
+            statusCode: reply.statusCode,
+            headers: reply.getHeaders(),
+            body: payload,
+            responseTimeMs: reply.elapsedTime
+          }
+        },
+        "http response"
+      );
+      return payload;
     });
   }
 
