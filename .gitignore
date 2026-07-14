@@ -13,3 +13,4 @@ apps/api/prisma/migrations/
 .turbo/
 logs/
 *.log
+.pi/extensions/argus-forge/argus-forge.settings.json

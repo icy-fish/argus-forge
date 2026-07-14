@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -154,6 +157,21 @@ type Config = {
   httpRequestLogDetails: boolean;
 };
 
+type ConfigFile = Partial<{
+  ingestUrl: unknown;
+  agentName: unknown;
+  projectId: unknown;
+  projectName: unknown;
+  flushIntervalMs: unknown;
+  flushTimeoutMs: unknown;
+  batchSize: unknown;
+  maxQueueSize: unknown;
+  maxRetryAttempts: unknown;
+  emitStreamChunks: unknown;
+  logLevel: unknown;
+  httpRequestLogDetails: unknown;
+}>;
+
 type LlmRequestState = {
   requestId: string;
   spanId: string;
@@ -178,6 +196,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 1000;
 const DEFAULT_MAX_QUEUE_SIZE = 5000;
 const DEFAULT_FLUSH_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+const SETTINGS_FILE_NAME = "argus-forge.settings.json";
 const PREVIEW_CHARS = 500;
 const SUMMARY_CHARS = 2000;
 const SECRET_KEY_RE = /(api[_-]?key|authorization|bearer|cookie|credential|password|secret|token)/i;
@@ -706,20 +725,35 @@ function on(pi: PiLike, name: HookName, handler: HookHandler): void {
 }
 
 function readConfig(cwd: string): Config {
+  const settings = readSettingsFile();
   return {
-    ingestUrl: process.env.ARGUS_FORGE_INGEST_URL || DEFAULT_INGEST_URL,
-    agentName: process.env.ARGUS_FORGE_AGENT_NAME || "pi",
-    projectId: process.env.ARGUS_FORGE_PROJECT_ID || slug(cwd),
-    projectName: process.env.ARGUS_FORGE_PROJECT_NAME || basename(cwd),
-    flushIntervalMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_INTERVAL_MS, DEFAULT_FLUSH_INTERVAL_MS),
-    flushTimeoutMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_TIMEOUT_MS, DEFAULT_FLUSH_TIMEOUT_MS),
-    batchSize: Math.min(readPositiveInt(process.env.ARGUS_FORGE_BATCH_SIZE, 100), MAX_BATCH_SIZE),
-    maxQueueSize: readPositiveInt(process.env.ARGUS_FORGE_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE),
-    maxRetryAttempts: readPositiveInt(process.env.ARGUS_FORGE_MAX_RETRY_ATTEMPTS, DEFAULT_MAX_RETRY_ATTEMPTS),
-    emitStreamChunks: readBooleanEnv(process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS),
-    logLevel: readLogLevel(process.env.ARGUS_FORGE_LOG_LEVEL, "warn"),
-    httpRequestLogDetails: readBooleanEnv(process.env.ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS)
+    ingestUrl: readStringSetting(process.env.ARGUS_FORGE_INGEST_URL, settings.ingestUrl, DEFAULT_INGEST_URL),
+    agentName: readStringSetting(process.env.ARGUS_FORGE_AGENT_NAME, settings.agentName, "pi"),
+    projectId: readStringSetting(process.env.ARGUS_FORGE_PROJECT_ID, settings.projectId, slug(cwd)),
+    projectName: readStringSetting(process.env.ARGUS_FORGE_PROJECT_NAME, settings.projectName, basename(cwd)),
+    flushIntervalMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_INTERVAL_MS ?? settings.flushIntervalMs, DEFAULT_FLUSH_INTERVAL_MS),
+    flushTimeoutMs: readPositiveInt(process.env.ARGUS_FORGE_FLUSH_TIMEOUT_MS ?? settings.flushTimeoutMs, DEFAULT_FLUSH_TIMEOUT_MS),
+    batchSize: Math.min(readPositiveInt(process.env.ARGUS_FORGE_BATCH_SIZE ?? settings.batchSize, 100), MAX_BATCH_SIZE),
+    maxQueueSize: readPositiveInt(process.env.ARGUS_FORGE_MAX_QUEUE_SIZE ?? settings.maxQueueSize, DEFAULT_MAX_QUEUE_SIZE),
+    maxRetryAttempts: readPositiveInt(process.env.ARGUS_FORGE_MAX_RETRY_ATTEMPTS ?? settings.maxRetryAttempts, DEFAULT_MAX_RETRY_ATTEMPTS),
+    emitStreamChunks: readBooleanSetting(process.env.ARGUS_FORGE_EMIT_STREAM_CHUNKS ?? settings.emitStreamChunks, false),
+    logLevel: readLogLevel(process.env.ARGUS_FORGE_LOG_LEVEL ?? settings.logLevel, "warn"),
+    httpRequestLogDetails: readBooleanSetting(process.env.ARGUS_FORGE_HTTP_REQUEST_LOG_DETAILS ?? settings.httpRequestLogDetails, false)
   };
+}
+
+function readSettingsFile(): ConfigFile {
+  const settingsPath = join(dirname(fileURLToPath(import.meta.url)), SETTINGS_FILE_NAME);
+  if (!existsSync(settingsPath)) return {};
+
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+    return isRecord(parsed) ? parsed : {};
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[argus-forge] failed to read ${settingsPath}: ${message}`);
+    return {};
+  }
 }
 
 function isoNow(): string {
@@ -808,17 +842,24 @@ function truncate(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars - 1)}...`;
 }
 
-function readPositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+function readStringSetting(envValue: string | undefined, fileValue: unknown, fallback: string): string {
+  if (envValue && envValue.length > 0) return envValue;
+  return typeof fileValue === "string" && fileValue.length > 0 ? fileValue : fallback;
+}
+
+function readPositiveInt(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(typeof value === "string" ? value : "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function readBooleanEnv(value: string | undefined): boolean {
-  return value === "1" || value === "true";
+function readBooleanSetting(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return fallback;
+  return value === "1" || value.toLowerCase() === "true";
 }
 
-function readLogLevel(value: string | undefined, fallback: LogLevel): LogLevel {
-  return value && value in LOG_LEVELS ? (value as LogLevel) : fallback;
+function readLogLevel(value: unknown, fallback: LogLevel): LogLevel {
+  return typeof value === "string" && value in LOG_LEVELS ? (value as LogLevel) : fallback;
 }
 
 function basename(path: string): string {
