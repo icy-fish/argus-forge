@@ -632,9 +632,8 @@ class EventQueue {
         this.logger.debug("ingest http response", { url: this.config.ingestUrl, status: response.status, ok: response.ok });
       }
       if (!response.ok) {
-        if (response.body) {
-          this.logger.warn("Upstream response error:", response);
-        }
+        const bodyText = await response.text().catch(() => "Failed to read response body");
+        this.logger.warn("Upstream response error:", bodyText);
         throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
       }
       if (this.retryTimer) {
