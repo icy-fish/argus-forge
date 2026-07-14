@@ -179,6 +179,7 @@ type LlmRequestState = {
   model: string;
   startedAt: string;
   inputBytes?: number;
+  requestMetadata?: Metadata;
 };
 
 type ToolState = {
@@ -357,9 +358,10 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
     const payload = readUnknown(event, ["payload"]) ?? readUnknown(event, ["request"]) ?? readUnknown(event, ["messages"]) ?? event;
     const inputBytes = byteLength(payload);
     const startedAt = isoNow();
+    const requestMetadata = metadata({ requestPreview: completeJson(payload), requestSummary: summarize(payload, PREVIEW_CHARS) });
 
     state.activeLlmSpanId = llmSpanId;
-    state.llmRequests.set(requestId, { requestId, spanId: llmSpanId, provider, model, startedAt, inputBytes });
+    state.llmRequests.set(requestId, { requestId, spanId: llmSpanId, provider, model, startedAt, inputBytes, requestMetadata });
 
     queue.enqueue({
       ...common,
@@ -373,7 +375,7 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
       requestId,
       status: "running",
       inputBytes,
-      requestMetadata: metadata({ requestPreview: summarize(payload, PREVIEW_CHARS) })
+      requestMetadata
     });
   });
 
@@ -385,6 +387,8 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
     const latencyMs = durationMs(request.startedAt, isoNow());
     const errorMessage = readString(event, ["error", "message"]) ?? readString(event, ["errorMessage"]);
     const status = readNumber(event, ["status"]) ?? readNumber(event, ["response", "status"]);
+    const response = readUnknown(event, ["response"]) ?? readUnknown(event, ["payload"]) ?? event;
+    request.requestMetadata = metadata({ ...request.requestMetadata, responsePreview: completeJson(response), responseStatus: status });
     if (errorMessage || (status != null && status >= 400)) {
       emit({
         ...common,
@@ -398,7 +402,7 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
         latencyMs,
         errorCode: readString(event, ["error", "code"]) ?? readString(event, ["errorCode"]),
         errorMessage: errorMessage ?? `Provider request failed with HTTP ${status}`,
-        requestMetadata: metadata({ responseStatus: status })
+        requestMetadata: metadata({ ...request.requestMetadata, errorPreview: completeJson(readUnknown(event, ["error"]) ?? event) })
       }, ["failed", request.requestId]);
       state.llmRequests.delete(request.requestId);
       return;
@@ -557,6 +561,8 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
     const request = lastValue(state.llmRequests);
     if (!request) return;
     const usage = readObject(event, ["message", "usage"]) ?? readObject(event, ["usage"]) ?? {};
+    const response = readUnknown(event, ["message"]) ?? readUnknown(event, ["response"]) ?? event;
+    request.requestMetadata = metadata({ ...request.requestMetadata, responsePreview: completeJson(response) });
     emit(
       {
         ...common,
@@ -572,7 +578,7 @@ export default function argusForgePiExtension(pi: ExtensionAPI): void {
         cachedTokens: tokenCount(usage, ["cachedTokens", "cached_tokens", "cacheRead", "cacheWrite"]),
         latencyMs: durationMs(request.startedAt, isoNow()),
         finishReason: readString(event, ["finishReason"]) ?? readString(event, ["message", "finishReason"]),
-        requestMetadata: metadata({ usageUnavailable: Object.keys(usage).length === 0, completedFrom: "message_or_agent_end" })
+        requestMetadata: metadata({ ...request.requestMetadata, usageUnavailable: Object.keys(usage).length === 0, completedFrom: "message_or_agent_end" })
       },
       ["completed", request.requestId]
     );
@@ -814,6 +820,25 @@ function toJsonValue(value: unknown): JsonValue {
 function redactJson(value: unknown): JsonValue | undefined {
   if (value == null) return undefined;
   return toJsonValue(redact(value, new WeakSet<object>()));
+}
+
+function completeJson(value: unknown): JsonValue | undefined {
+  if (value == null) return undefined;
+  return toJsonValue(redactComplete(value, new WeakSet<object>()));
+}
+
+function redactComplete(value: unknown, seen: WeakSet<object>): unknown {
+  if (value == null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((item) => redactComplete(item, seen));
+
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    output[key] = SECRET_KEY_RE.test(key) ? "[REDACTED]" : redactComplete(item, seen);
+  }
+  return output;
 }
 
 function redact(value: unknown, seen: WeakSet<object>): unknown {

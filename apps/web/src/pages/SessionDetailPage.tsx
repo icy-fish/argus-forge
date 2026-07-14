@@ -8,8 +8,104 @@ import ToolUsageChart from "../components/charts/ToolUsageChart";
 import TraceTimeline from "../components/TraceTimeline";
 import { formatCurrency, formatDuration, formatNumber } from "../types";
 
+type LlmMessage = {
+  index: number;
+  role: string;
+  content: string;
+};
+
 function flattenSpans(spans: TraceSpan[]): TraceSpan[] {
   return spans.flatMap((span) => [span, ...flattenSpans(span.children)]);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function textFromContent(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (isRecord(item)) return textFromContent(item.text ?? item.content ?? item.input ?? item.output);
+        return textFromContent(item);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (isRecord(value)) return textFromContent(value.text ?? value.content ?? value.input ?? value.output ?? JSON.stringify(value, null, 2));
+  return "";
+}
+
+function messagesFromPreview(preview: unknown): LlmMessage[] {
+  const source = Array.isArray(preview) ? preview : isRecord(preview) ? preview.messages : undefined;
+  if (!Array.isArray(source)) return [];
+
+  return source
+    .map((message, index) => {
+      const role = isRecord(message) && typeof message.role === "string" ? message.role : `message ${index + 1}`;
+      const content = isRecord(message) ? textFromContent(message.content ?? message.text ?? message.parts) : textFromContent(message);
+      return { index, role, content };
+    })
+    .filter((message) => message.content.length > 0);
+}
+
+function responseTextFromPreview(preview: unknown): string {
+  if (isRecord(preview)) {
+    const choice = Array.isArray(preview.choices) && isRecord(preview.choices[0]) ? preview.choices[0] : undefined;
+    const choiceMessage = choice && isRecord(choice.message) ? choice.message : undefined;
+    return textFromContent(
+      preview.content ??
+        preview.text ??
+        preview.output ??
+        preview.message ??
+        choiceMessage?.content ??
+        choice?.text ??
+        preview
+    );
+  }
+  return textFromContent(preview);
+}
+
+function LlmRequestDetail({ span }: { span: TraceSpan }) {
+  if (span.type !== "llm" || !isRecord(span.requestMetadata)) return null;
+
+  const requestPreview = span.requestMetadata.requestPreview;
+  const responsePreview = span.requestMetadata.responsePreview;
+  const messages = messagesFromPreview(requestPreview);
+  const responseText = responseTextFromPreview(responsePreview);
+
+  if (!messages.length && !responseText) return null;
+
+  return (
+    <div className="llm-detail">
+      {messages.length ? (
+        <section>
+          <h3>LLM Request</h3>
+          <ol className="llm-message-list">
+            {messages.map((message) => (
+              <li key={`${message.index}-${message.role}`} className="llm-message">
+                <div className="llm-message-header">
+                  <span>{message.index + 1}</span>
+                  <strong>{message.role}</strong>
+                </div>
+                <p>{message.content}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+      {responseText ? (
+        <section>
+          <h3>LLM Response</h3>
+          <div className="llm-response">{responseText}</div>
+        </section>
+      ) : null}
+    </div>
+  );
 }
 
 function toToolMetrics(spans: TraceSpan[]): ToolMetricsItem[] {
@@ -112,6 +208,7 @@ export default function SessionDetailPage() {
                 <dt>Duration</dt><dd>{formatDuration(selectedSpan.durationMs)}</dd>
                 <dt>Events</dt><dd>{selectedSpan.events.length}</dd>
               </dl>
+              <LlmRequestDetail span={selectedSpan} />
               <pre>{JSON.stringify(rawEvents.map((item) => item.raw), null, 2)}</pre>
             </>
           ) : (
