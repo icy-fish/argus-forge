@@ -1,5 +1,6 @@
 import { AlertTriangle, Clock, DollarSign, Gauge, Server, Zap } from "lucide-react";
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import MetricCard from "../components/MetricCard";
 import LatencyChart from "../components/charts/LatencyChart";
 import ModelUsageChart from "../components/charts/ModelUsageChart";
@@ -8,9 +9,19 @@ import ToolUsageChart from "../components/charts/ToolUsageChart";
 import { useLatencyMetrics, useModelMetrics, useSummary, useThroughput, useToolMetrics } from "../api/queries";
 import { formatCurrency, formatDuration, formatNumber, timeRangeToQuery, type TimeRangeKey } from "../types";
 
+const DASHBOARD_REFRESH_ROUNDS = 5;
+const DASHBOARD_REFRESH_BASE_MS = 10_000;
+const DASHBOARD_REFRESH_JITTER_MS = 3_000;
+
+function getDashboardRefreshDelayMs() {
+  const jitter = Math.random() * DASHBOARD_REFRESH_JITTER_MS * 2 - DASHBOARD_REFRESH_JITTER_MS;
+  return DASHBOARD_REFRESH_BASE_MS + jitter;
+}
+
 export default function DashboardPage() {
+  const queryClient = useQueryClient();
   const [range, setRange] = useState<TimeRangeKey>("24h");
-  const params = timeRangeToQuery(range);
+  const params = useMemo(() => timeRangeToQuery(range), [range]);
   const summary = useSummary(params);
   const tools = useToolMetrics(params);
   const models = useModelMetrics(params);
@@ -18,6 +29,38 @@ export default function DashboardPage() {
   const throughput = useThroughput(params);
   const totals = summary.data?.data;
   const isEmpty = totals && totals.sessions === 0 && totals.llmRequests === 0 && totals.toolCalls === 0;
+
+  useEffect(() => {
+    let isDisposed = false;
+    let refreshRound = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleRefresh = () => {
+      if (isDisposed || refreshRound >= DASHBOARD_REFRESH_ROUNDS) {
+        return;
+      }
+
+      timeoutId = setTimeout(() => {
+        refreshRound += 1;
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["summary", params], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ["tools", params], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ["models", params], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ["latency", params], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ["throughput", params], exact: true })
+        ]).finally(scheduleRefresh);
+      }, getDashboardRefreshDelayMs());
+    };
+
+    scheduleRefresh();
+
+    return () => {
+      isDisposed = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [params, queryClient]);
 
   return (
     <section>
