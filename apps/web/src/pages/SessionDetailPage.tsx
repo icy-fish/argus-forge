@@ -1,11 +1,39 @@
 import { AlertTriangle, ArrowLeft, Clock, DollarSign, Hammer, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { TraceSpan } from "@argus-forge/shared";
+import type { ToolMetricsItem, TraceSpan } from "@argus-forge/shared";
 import { useSession, useSessionMetrics, useSessionTimeline } from "../api/queries";
 import MetricCard from "../components/MetricCard";
+import ToolUsageChart from "../components/charts/ToolUsageChart";
 import TraceTimeline from "../components/TraceTimeline";
 import { formatCurrency, formatDuration, formatNumber } from "../types";
+
+function flattenSpans(spans: TraceSpan[]): TraceSpan[] {
+  return spans.flatMap((span) => [span, ...flattenSpans(span.children)]);
+}
+
+function toToolMetrics(spans: TraceSpan[]): ToolMetricsItem[] {
+  const groups = new Map<string, { toolName: string; count: number; errorCount: number; latencies: number[] }>();
+  for (const span of flattenSpans(spans)) {
+    if (span.type !== "tool" || !span.toolName) continue;
+    const group = groups.get(span.toolName) ?? { toolName: span.toolName, count: 0, errorCount: 0, latencies: [] };
+    group.count += 1;
+    if (span.status === "failed") group.errorCount += 1;
+    if (span.durationMs != null) group.latencies.push(span.durationMs);
+    groups.set(span.toolName, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      toolName: group.toolName,
+      count: group.count,
+      errorCount: group.errorCount,
+      averageLatencyMs: group.latencies.length
+        ? Math.round(group.latencies.reduce((sum, latency) => sum + latency, 0) / group.latencies.length)
+        : null
+    }))
+    .sort((left, right) => right.count - left.count || left.toolName.localeCompare(right.toolName));
+}
 
 export default function SessionDetailPage() {
   const { sessionId } = useParams();
@@ -16,6 +44,7 @@ export default function SessionDetailPage() {
   const selectedSpan = selected ?? timeline.data?.data.spans[0] ?? null;
   const totals = metrics.data?.data;
   const rawEvents = useMemo(() => selectedSpan?.events ?? timeline.data?.data.events ?? [], [selectedSpan, timeline.data?.data.events]);
+  const toolMetrics = useMemo(() => toToolMetrics(timeline.data?.data.spans ?? []), [timeline.data?.data.spans]);
 
   return (
     <section>
@@ -38,6 +67,35 @@ export default function SessionDetailPage() {
         <MetricCard icon={Clock} label="P95 Latency" value={formatDuration(totals?.p95LatencyMs)} />
         <MetricCard icon={AlertTriangle} label="Errors" value={formatNumber(totals?.errorCount)} detail={`${(((totals?.errorRate ?? 0) * 100)).toFixed(1)}%`} />
       </div>
+
+      <section className="panel session-tool-panel">
+        <h2>Tool Calls by Tool</h2>
+        <ToolUsageChart data={toolMetrics} />
+        {toolMetrics.length ? (
+          <div className="tool-stats-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th>Calls</th>
+                  <th>Errors</th>
+                  <th>Average Latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {toolMetrics.map((tool) => (
+                  <tr key={tool.toolName}>
+                    <td>{tool.toolName}</td>
+                    <td>{formatNumber(tool.count)}</td>
+                    <td>{formatNumber(tool.errorCount)}</td>
+                    <td>{formatDuration(tool.averageLatencyMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
 
       <div className="detail-grid">
         <section className="panel">

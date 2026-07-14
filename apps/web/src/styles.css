@@ -48,6 +48,9 @@ th { color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing:
 .pill.failed { background: #fee2e2; color: #991b1b; }
 
 .back-link { display: inline-flex; align-items: center; gap: 6px; color: #475569; text-decoration: none; margin-bottom: 16px; }
+.session-tool-panel { margin-bottom: 18px; }
+.tool-stats-table { margin-top: 14px; overflow-x: auto; }
+.tool-stats-table table { min-width: 560px; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr); gap: 18px; align-items: start; }
 .trace-timeline, .span-children { list-style: none; padding: 0; margin: 0; }
 .span-children { margin-left: 26px; padding-left: 16px; border-left: 2px solid #e2e8f0; }
