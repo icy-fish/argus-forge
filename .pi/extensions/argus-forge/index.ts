@@ -24,65 +24,65 @@ type ArgusEvent =
   | (CommonEvent & { type: "session.started"; projectName?: string; title?: string; status?: EventStatus })
   | (CommonEvent & { type: "session.updated"; title?: string; status?: EventStatus; endedAt?: string })
   | (CommonEvent & {
-      type: "llm.request.started" | "llm.request.completed";
-      provider: string;
-      model: string;
-      requestId?: string;
-      status?: "running" | "completed";
-      promptTokens?: number;
-      completionTokens?: number;
-      cachedTokens?: number;
-      inputBytes?: number;
-      outputBytes?: number;
-      latencyMs?: number;
-      finishReason?: string;
-      requestMetadata?: Metadata;
-    })
+    type: "llm.request.started" | "llm.request.completed";
+    provider: string;
+    model: string;
+    requestId?: string;
+    status?: "running" | "completed";
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedTokens?: number;
+    inputBytes?: number;
+    outputBytes?: number;
+    latencyMs?: number;
+    finishReason?: string;
+    requestMetadata?: Metadata;
+  })
   | (CommonEvent & {
-      type: "llm.request.failed";
-      provider: string;
-      model: string;
-      requestId?: string;
-      status?: "failed";
-      latencyMs?: number;
-      errorCode?: string;
-      errorMessage: string;
-      requestMetadata?: Metadata;
-    })
+    type: "llm.request.failed";
+    provider: string;
+    model: string;
+    requestId?: string;
+    status?: "failed";
+    latencyMs?: number;
+    errorCode?: string;
+    errorMessage: string;
+    requestMetadata?: Metadata;
+  })
   | (CommonEvent & {
-      type: "llm.stream.chunk";
-      provider?: string;
-      model?: string;
-      requestId?: string;
-      chunkIndex?: number;
-      contentBytes?: number;
-      completionTokens?: number;
-      textPreview?: string;
-    })
+    type: "llm.stream.chunk";
+    provider?: string;
+    model?: string;
+    requestId?: string;
+    chunkIndex?: number;
+    contentBytes?: number;
+    completionTokens?: number;
+    textPreview?: string;
+  })
   | (CommonEvent & {
-      type: "tool.call.started" | "tool.call.completed";
-      toolName: string;
-      callId?: string;
-      status?: "running" | "completed";
-      argumentsSummary?: string;
-      redactedArguments?: JsonValue;
-      resultSummary?: string;
-      exitStatus?: string;
-      latencyMs?: number;
-    })
+    type: "tool.call.started" | "tool.call.completed";
+    toolName: string;
+    callId?: string;
+    status?: "running" | "completed";
+    argumentsSummary?: string;
+    redactedArguments?: JsonValue;
+    resultSummary?: string;
+    exitStatus?: string;
+    latencyMs?: number;
+  })
   | (CommonEvent & {
-      type: "tool.call.failed";
-      toolName: string;
-      callId?: string;
-      status?: "failed";
-      argumentsSummary?: string;
-      redactedArguments?: JsonValue;
-      resultSummary?: string;
-      exitStatus?: string;
-      latencyMs?: number;
-      errorCode?: string;
-      errorMessage: string;
-    })
+    type: "tool.call.failed";
+    toolName: string;
+    callId?: string;
+    status?: "failed";
+    argumentsSummary?: string;
+    redactedArguments?: JsonValue;
+    resultSummary?: string;
+    exitStatus?: string;
+    latencyMs?: number;
+    errorCode?: string;
+    errorMessage: string;
+  })
   | (CommonEvent & { type: "agent.log"; level?: LogLevel; message: string });
 
 type ArgusEventDraft = Omit<CommonEvent, "eventId" | "timestamp"> & {
@@ -620,7 +620,7 @@ class EventQueue {
     const body = JSON.stringify({ events: batch });
     try {
       if (this.config.httpRequestLogDetails) {
-        this.logger.debug("ingest http request", { url: this.config.ingestUrl, headers, body });
+        this.logger.debug("ingest http request", { url: this.config.ingestUrl, headers, events: batch });
       }
       const response = await fetch(this.config.ingestUrl, {
         method: "POST",
@@ -631,7 +631,12 @@ class EventQueue {
       if (this.config.httpRequestLogDetails) {
         this.logger.debug("ingest http response", { url: this.config.ingestUrl, status: response.status, ok: response.ok });
       }
-      if (!response.ok) throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
+      if (!response.ok) {
+        if (response.body) {
+          this.logger.warn("Upstream response error:", response);
+        }
+        throw new Error(`Argus Forge ingest returned HTTP ${response.status}`);
+      }
       if (this.retryTimer) {
         clearTimeout(this.retryTimer);
         this.retryTimer = undefined;
@@ -673,7 +678,7 @@ class EventQueue {
 }
 
 class ExtensionLogger {
-  constructor(private readonly level: LogLevel) {}
+  constructor(private readonly level: LogLevel) { }
 
   debug(message: string, data?: Record<string, unknown>): void {
     this.log("debug", message, data);
