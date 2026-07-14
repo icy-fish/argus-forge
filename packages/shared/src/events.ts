@@ -19,6 +19,8 @@ const jsonValue: z.ZodType<unknown> = z.lazy(() =>
 
 const metadataSchema = z.record(jsonValue).default({});
 
+const maxToolSummaryLength = 1_000_000;
+
 const common = z.object({
   eventId: z.string().min(1),
   sessionId: z.string().min(1),
@@ -90,9 +92,9 @@ const llmChunk = common.extend({
 const toolBase = common.extend({
   toolName: z.string().min(1),
   callId: z.string().optional(),
-  argumentsSummary: z.string().max(2000).optional(),
+  argumentsSummary: z.string().max(maxToolSummaryLength).optional(),
   redactedArguments: jsonValue.optional(),
-  resultSummary: z.string().max(2000).optional(),
+  resultSummary: z.string().max(maxToolSummaryLength).optional(),
   exitStatus: z.string().optional(),
   latencyMs: z.number().nonnegative().optional()
 });
