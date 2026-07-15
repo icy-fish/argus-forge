@@ -2,58 +2,57 @@
 
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const DEFAULT_REPO = "icy-fish/argus-forge";
-const DEFAULT_AUTHOR = "icy-fish";
 const DEFAULT_ASSIGNEE = "icy-fish";
-const DEFAULT_LABEL = "doing";
-const DEFAULT_DAYS = 14;
+const DEFAULT_DOING_LABEL = "doing";
+const DEFAULT_REVIEW_LABEL = "review needed";
+const DEFAULT_BASE_BRANCH = "main";
+const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 100;
+const MAX_COMMENT_LENGTH = 60_000;
 
 const args = parseArgs(process.argv.slice(2));
 const repo = args.repo ?? DEFAULT_REPO;
-const author = args.author ?? DEFAULT_AUTHOR;
 const assignee = args.assignee ?? DEFAULT_ASSIGNEE;
-const doingLabel = args.label ?? DEFAULT_LABEL;
+const doingLabel = args["doing-label"] ?? DEFAULT_DOING_LABEL;
+const reviewLabel = args["review-label"] ?? DEFAULT_REVIEW_LABEL;
 const days = Number(args.days ?? DEFAULT_DAYS);
 const limit = Number(args.limit ?? DEFAULT_LIMIT);
 const dryRun = Boolean(args["dry-run"]);
 const codexModel = args["codex-model"];
-const worktreeRoot = args["worktree-dir"] ?? join(tmpdir(), "argus-forge-codex-worktrees");
+const checkoutPath =
+  args["workspace-dir"] ??
+  join(tmpdir(), "github-issue-analysis", repo.replaceAll("/", "-"));
 const commands = {
   gh: resolveCommand("gh"),
   codex: resolveCommand("codex"),
   git: resolveCommand("git"),
 };
 
-if (!Number.isInteger(days) || days <= 0) {
+if (!Number.isInteger(days) || days <= 0)
   fail("--days must be a positive integer");
-}
-
-if (!Number.isInteger(limit) || limit <= 0) {
+if (!Number.isInteger(limit) || limit <= 0)
   fail("--limit must be a positive integer");
-}
 
-main().catch((error) => {
-  fail(error instanceof Error ? error.message : String(error));
-});
+main().catch((error) =>
+  fail(error instanceof Error ? error.message : String(error)),
+);
 
 async function main() {
   assertCommand("gh", ["--version"]);
   assertCommand("codex", ["--version"]);
   assertCommand("git", ["--version"]);
 
-  const baseBranch = args.base ?? getDefaultBranch(repo);
+  const baseBranch = args.base ?? DEFAULT_BASE_BRANCH;
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const cutoffDate = cutoff.toISOString().slice(0, 10);
-
-  const issues = listCandidateIssues({ repo, author, cutoffDate, limit }).filter(
+  const issues = listCandidateIssues({ repo, cutoffDate, limit }).filter(
     (issue) =>
       issue.state === "OPEN" &&
-      issue.author?.login === author &&
       new Date(issue.createdAt) >= cutoff &&
       issue.assignees.length === 0 &&
       issue.labels.length === 0,
@@ -67,98 +66,49 @@ async function main() {
   console.log(
     `Found ${issues.length} matching issue${issues.length === 1 ? "" : "s"} in ${repo}.`,
   );
-
   if (dryRun) {
-    for (const issue of issues) {
+    for (const issue of issues)
       console.log(`#${issue.number}: ${issue.title} (${issue.url})`);
-    }
     return;
   }
 
-  ensureLabel(repo, doingLabel);
-  fetchBaseBranch(baseBranch);
+  ensureLabel(repo, doingLabel, "FBCA04", "Issue analysis is in progress");
+  ensureLabel(
+    repo,
+    reviewLabel,
+    "0E8A16",
+    "Issue analysis is ready for review",
+  );
+  prepareReusableCheckout({ repo, baseBranch, checkoutPath });
 
   for (const summary of issues) {
     const issue = getIssue(repo, summary.number);
-    const branch = uniqueBranchName(
-      `codex/issue-${issue.number}-${slugify(issue.title)}`,
+    console.log(`\nAnalyzing #${issue.number}: ${issue.title}`);
+
+    markIssueInProgress(repo, issue.number, doingLabel, assignee);
+    const prompt = buildCodexPrompt({ issue, repo, baseBranch, checkoutPath });
+    const result = await runCodexAnalysis(
+      prompt,
+      codexModel,
+      checkoutPath,
+      issue.number,
     );
-    let worktreePath;
-
-    console.log(`\nHandling #${issue.number}: ${issue.title}`);
-
-    try {
-      worktreePath = createIssueWorktree({ baseBranch, branch, issueNumber: issue.number });
-      const prompt = buildCodexPrompt({ issue, repo, baseBranch, worktreePath });
-
-      console.log(`Starting Codex with issue context in ${worktreePath}.`);
-      const codexProcess = startCodex(prompt, codexModel, worktreePath);
-
-      try {
-        markIssueInProgress(repo, issue.number, doingLabel, assignee);
-      } catch (error) {
-        codexProcess.kill("SIGTERM");
-        throw error;
-      }
-
-      const codexExitCode = await waitForProcess(codexProcess);
-      if (codexExitCode !== 0) {
-        throw new Error(`Codex failed for #${issue.number} with exit code ${codexExitCode}`);
-      }
-
-      const status = gitStatus(worktreePath);
-      if (!status) {
-        console.log(`Codex made no changes for #${issue.number}; skipping PR creation.`);
-        continue;
-      }
-
-      run("git", ["add", "-A"], { cwd: worktreePath });
-      run(
-        "git",
-        [
-          "commit",
-          "-m",
-          `Fix #${issue.number}: ${truncate(issue.title, 60)}`,
-          "-m",
-          `Closes #${issue.number}`,
-        ],
-        { cwd: worktreePath },
-      );
-      run("git", ["push", "-u", "origin", branch], { cwd: worktreePath });
-      run(
-        "gh",
-        [
-          "pr",
-          "create",
-          "-R",
-          repo,
-          "--base",
-          baseBranch,
-          "--head",
-          branch,
-          "--title",
-          `Fix #${issue.number}: ${issue.title}`,
-          "--body",
-          [
-            `Closes #${issue.number}`,
-            "",
-            `Original issue: ${issue.url}`,
-            "",
-            "Implemented by Codex via the issue handling workflow.",
-          ].join("\n"),
-        ],
-        { cwd: worktreePath },
-      );
-    } finally {
-      if (worktreePath) {
-        removeIssueWorktree(worktreePath);
-      }
+    if (!result.sessionId) {
+      throw new Error(`Codex did not report a session id for #${issue.number}`);
     }
+    if (!result.content.trim()) {
+      throw new Error(`Codex produced no analysis for #${issue.number}`);
+    }
+
+    addAnalysisComment(repo, issue.number, result);
+    markIssueReadyForReview(repo, issue.number, reviewLabel);
+    console.log(
+      `Posted analysis for #${issue.number} (Codex session ${result.sessionId}).`,
+    );
   }
 }
 
-function listCandidateIssues({ repo, author, cutoffDate, limit }) {
-  const search = `created:>=${cutoffDate} no:assignee no:label`;
+function listCandidateIssues({ repo, cutoffDate, limit }) {
   const stdout = run("gh", [
     "issue",
     "list",
@@ -166,32 +116,67 @@ function listCandidateIssues({ repo, author, cutoffDate, limit }) {
     repo,
     "--state",
     "open",
-    "--author",
-    author,
     "--search",
-    search,
+    `created:>=${cutoffDate} no:assignee no:label`,
     "--limit",
     String(limit),
     "--json",
-    "number,title,createdAt,state,author,assignees,labels,url",
+    "number,title,createdAt,state,assignees,labels,url",
   ]);
   return JSON.parse(stdout);
 }
 
 function getIssue(repo, number) {
-  const stdout = run("gh", [
-    "issue",
-    "view",
-    String(number),
-    "-R",
-    repo,
-    "--json",
-    "number,title,body,createdAt,updatedAt,state,author,assignees,labels,comments,url",
-  ]);
-  return JSON.parse(stdout);
+  return JSON.parse(
+    run("gh", [
+      "issue",
+      "view",
+      String(number),
+      "-R",
+      repo,
+      "--json",
+      "number,title,body,createdAt,updatedAt,state,author,assignees,labels,comments,url",
+    ]),
+  );
 }
 
-function buildCodexPrompt({ issue, repo, baseBranch, worktreePath }) {
+function prepareReusableCheckout({ repo, baseBranch, checkoutPath }) {
+  mkdirSync(dirname(checkoutPath), { recursive: true });
+  if (!existsSync(join(checkoutPath, ".git"))) {
+    if (existsSync(checkoutPath)) {
+      throw new Error(
+        `Reusable workspace exists but is not a Git checkout: ${checkoutPath}`,
+      );
+    }
+    run("gh", ["repo", "clone", repo, checkoutPath, "--", "--no-checkout"]);
+  } else {
+    const origin = run("git", ["remote", "get-url", "origin"], {
+      cwd: checkoutPath,
+    }).trim();
+    const expected = repo.toLowerCase();
+    if (
+      !origin
+        .toLowerCase()
+        .replace(/\.git$/u, "")
+        .endsWith(expected)
+    ) {
+      throw new Error(
+        `Reusable workspace origin does not match ${repo}: ${origin}`,
+      );
+    }
+  }
+
+  run("git", ["fetch", "origin", baseBranch, "--prune"], { cwd: checkoutPath });
+  run("git", ["checkout", "-B", baseBranch, `origin/${baseBranch}`], {
+    cwd: checkoutPath,
+  });
+  run("git", ["reset", "--hard", `origin/${baseBranch}`], {
+    cwd: checkoutPath,
+  });
+  console.log(`Reusable analysis checkout is current at ${checkoutPath}.`);
+}
+
+function buildCodexPrompt({ issue, repo, baseBranch, checkoutPath }) {
   const comments = issue.comments
     .map(
       (comment, index) =>
@@ -200,20 +185,18 @@ function buildCodexPrompt({ issue, repo, baseBranch, worktreePath }) {
     .join("\n\n");
 
   return [
-    "You are working in the existing repository checkout.",
-    "",
-    "Implement the GitHub issue below.",
-    "",
-    "Rules:",
-    "- Keep the change scoped to the issue.",
-    "- Inspect the codebase before editing.",
-    "- Follow AGENTS.md and existing package conventions.",
-    "- Run validation appropriate to the changed package, using pnpm scripts when applicable.",
-    "- Do not commit, push, create branches, edit the GitHub issue, or create a pull request. The wrapper workflow handles those steps.",
+    "Analyze the GitHub issue below in Plan mode. Do not implement it and do not modify files.",
+    "Inspect the repository and its AGENTS.md instructions to ground the analysis in the current code.",
+    "First decide whether the issue is clear and complete enough to produce a reliable implementation plan.",
+    "Be rigorous: identify every fuzzy description, unstated behavior, ambiguous scope, missing acceptance criterion, or technical decision that must be clarified.",
+    "If clarification is needed, output concise questions for the user to answer and explain why each answer affects implementation. Do not invent requirements and do not provide a speculative implementation plan.",
+    "If no clarification is needed, output a concrete implementation plan with likely files/components, behavioral changes, edge cases, and validation/tests.",
+    "Make the final response suitable for posting directly as a GitHub issue comment.",
+    "Do not use GitHub CLI, edit the issue, commit, branch, push, or open a pull request.",
     "",
     `Repository: ${repo}`,
     `Base branch: ${baseBranch}`,
-    `Worktree: ${worktreePath}`,
+    `Checkout: ${checkoutPath}`,
     `Issue: #${issue.number}`,
     `URL: ${issue.url}`,
     `Title: ${issue.title}`,
@@ -225,42 +208,100 @@ function buildCodexPrompt({ issue, repo, baseBranch, worktreePath }) {
     "",
     issue.body || "(empty)",
     "",
-    "## Comments",
+    "## Existing comments",
     "",
     comments || "(none)",
   ].join("\n");
 }
 
-function startCodex(prompt, model, cwd) {
+async function runCodexAnalysis(prompt, model, cwd, issueNumber) {
+  const outputFile = join(
+    dirname(cwd),
+    `.issue-${issueNumber}-codex-output.md`,
+  );
+  rmSync(outputFile, { force: true });
   const codexArgs = [
     "exec",
     "--cd",
     cwd,
     "--sandbox",
-    "workspace-write",
+    "read-only",
+    "--json",
+    "--color",
+    "never",
+    "--output-last-message",
+    outputFile,
+    "--config",
+    'collaboration_mode="plan"',
   ];
-
-  if (model) {
-    codexArgs.push("--model", model);
-  }
-
+  if (model) codexArgs.push("--model", model);
   codexArgs.push("-");
 
-  const child = spawn(commands.codex.file, [...commands.codex.argsPrefix, ...codexArgs], {
-    cwd,
-    stdio: ["pipe", "inherit", "inherit"],
-    shell: false,
+  const child = spawn(
+    commands.codex.file,
+    [...commands.codex.argsPrefix, ...codexArgs],
+    {
+      cwd,
+      stdio: ["pipe", "pipe", "inherit"],
+      shell: false,
+    },
+  );
+  let jsonl = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    jsonl += chunk;
   });
-
   child.stdin.end(prompt);
-  return child;
+  const exitCode = await waitForProcess(child);
+  if (exitCode !== 0)
+    throw new Error(
+      `Codex failed for #${issueNumber} with exit code ${exitCode}`,
+    );
+
+  try {
+    return {
+      sessionId: extractSessionId(jsonl),
+      content: readFileSync(outputFile, "utf8"),
+    };
+  } finally {
+    rmSync(outputFile, { force: true });
+  }
 }
 
-function waitForProcess(child) {
-  return new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
+function extractSessionId(jsonl) {
+  for (const line of jsonl.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      const id =
+        event.thread_id ??
+        event.session_id ??
+        event.thread?.id ??
+        event.session?.id;
+      if (typeof id === "string" && id) return id;
+    } catch {
+      // Ignore non-JSON diagnostic output; Codex's final exit status is checked separately.
+    }
+  }
+  return null;
+}
+
+function addAnalysisComment(repo, number, { sessionId, content }) {
+  let body = [
+    `## Codex issue analysis`,
+    "",
+    `Codex session: \`${sessionId}\``,
+    "",
+    content.trim(),
+  ].join("\n");
+  if (body.length > MAX_COMMENT_LENGTH) {
+    body = `${body.slice(0, MAX_COMMENT_LENGTH)}\n\n_Analysis truncated to fit GitHub's comment limit._`;
+  }
+  run(
+    "gh",
+    ["issue", "comment", String(number), "-R", repo, "--body-file", "-"],
+    { input: body },
+  );
 }
 
 function markIssueInProgress(repo, number, label, assignee) {
@@ -277,21 +318,32 @@ function markIssueInProgress(repo, number, label, assignee) {
   ]);
 }
 
-function ensureLabel(repo, label) {
-  const stdout = run("gh", [
-    "label",
-    "list",
+function markIssueReadyForReview(repo, number, label) {
+  run("gh", [
+    "issue",
+    "edit",
+    String(number),
     "-R",
     repo,
-    "--search",
+    "--add-label",
     label,
-    "--json",
-    "name",
   ]);
-  const labels = JSON.parse(stdout);
-  const exists = labels.some((candidate) => candidate.name === label);
+}
 
-  if (!exists) {
+function ensureLabel(repo, label, color, description) {
+  const labels = JSON.parse(
+    run("gh", [
+      "label",
+      "list",
+      "-R",
+      repo,
+      "--search",
+      label,
+      "--json",
+      "name",
+    ]),
+  );
+  if (!labels.some((candidate) => candidate.name === label)) {
     run("gh", [
       "label",
       "create",
@@ -299,81 +351,18 @@ function ensureLabel(repo, label) {
       "-R",
       repo,
       "--color",
-      "FBCA04",
+      color,
       "--description",
-      "Issue is currently being handled",
+      description,
     ]);
   }
 }
 
-function getDefaultBranch(repo) {
-  const stdout = run("gh", [
-    "repo",
-    "view",
-    repo,
-    "--json",
-    "defaultBranchRef",
-    "--jq",
-    ".defaultBranchRef.name",
-  ]);
-  return stdout.trim();
-}
-
-function fetchBaseBranch(baseBranch) {
-  run("git", ["fetch", "origin", baseBranch]);
-}
-
-function createIssueWorktree({ baseBranch, branch, issueNumber }) {
-  mkdirSync(worktreeRoot, { recursive: true });
-  const worktreePath = mkdtempSync(join(worktreeRoot, `issue-${issueNumber}-`));
-  run("git", ["worktree", "add", "-b", branch, worktreePath, `origin/${baseBranch}`]);
-  return worktreePath;
-}
-
-function removeIssueWorktree(worktreePath) {
-  try {
-    run("git", ["worktree", "remove", "--force", worktreePath], { stdio: "ignore" });
-  } catch {
-    rmSync(worktreePath, { recursive: true, force: true });
-    run("git", ["worktree", "prune"], { stdio: "ignore" });
-  }
-}
-
-function gitStatus(cwd = process.cwd()) {
-  return run("git", ["status", "--porcelain"], { cwd }).trim();
-}
-
-function uniqueBranchName(baseName) {
-  const base = baseName.slice(0, 80).replace(/-+$/u, "");
-  if (!refExists(base) && !remoteBranchExists(base)) {
-    return base;
-  }
-
-  const suffix = new Date()
-    .toISOString()
-    .replace(/[-:TZ.]/gu, "")
-    .slice(0, 14);
-  return `${base}-${suffix}`;
-}
-
-function refExists(ref) {
-  try {
-    run("git", ["rev-parse", "--verify", "--quiet", ref], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function remoteBranchExists(branch) {
-  try {
-    run("git", ["ls-remote", "--exit-code", "--heads", "origin", branch], {
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
+function waitForProcess(child) {
+  return new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
 }
 
 function assertCommand(command, versionArgs) {
@@ -386,40 +375,42 @@ function assertCommand(command, versionArgs) {
 
 function run(command, commandArgs, options = {}) {
   const commandSpec = commands[command] ?? { file: command, argsPrefix: [] };
-
-  return execFileSync(commandSpec.file, [...commandSpec.argsPrefix, ...commandArgs], {
-    cwd: options.cwd ?? process.cwd(),
-    encoding: "utf8",
-    maxBuffer: 20 * 1024 * 1024,
-    stdio: options.stdio ?? ["ignore", "pipe", "inherit"],
-  });
+  return execFileSync(
+    commandSpec.file,
+    [...commandSpec.argsPrefix, ...commandArgs],
+    {
+      cwd: options.cwd ?? process.cwd(),
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024,
+      stdio: options.stdio ?? [
+        options.input === undefined ? "ignore" : "pipe",
+        "pipe",
+        "inherit",
+      ],
+      input: options.input,
+    },
+  );
 }
 
 function resolveCommand(command) {
-  if (process.platform !== "win32") {
-    return { file: command, argsPrefix: [] };
-  }
-
+  if (process.platform !== "win32") return { file: command, argsPrefix: [] };
   try {
-    const stdout = execFileSync("where.exe", [command], {
+    const candidates = execFileSync("where.exe", [command], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    });
-    const candidates = stdout
+    })
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter(Boolean);
-
     if (command === "codex") {
       const codexSpec = resolveCodexShim(candidates);
-      if (codexSpec) {
-        return codexSpec;
-      }
+      if (codexSpec) return codexSpec;
     }
-
     return {
       file:
-        candidates.find((candidate) => candidate.toLowerCase().endsWith(".exe")) ??
+        candidates.find((candidate) =>
+          candidate.toLowerCase().endsWith(".exe"),
+        ) ??
         candidates.find((candidate) => !/\.[^\\/]+$/u.test(candidate)) ??
         candidates[0] ??
         command,
@@ -432,69 +423,43 @@ function resolveCommand(command) {
 
 function resolveCodexShim(candidates) {
   for (const candidate of candidates) {
-    if (!candidate.toLowerCase().endsWith(".cmd")) {
-      continue;
-    }
-
+    if (!candidate.toLowerCase().endsWith(".cmd")) continue;
     const basedir = dirname(candidate);
-    const codexJs = join(basedir, "node_modules", "@openai", "codex", "bin", "codex.js");
-    if (!existsSync(codexJs)) {
-      continue;
-    }
-
+    const codexJs = join(
+      basedir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "bin",
+      "codex.js",
+    );
+    if (!existsSync(codexJs)) continue;
     const siblingNode = join(basedir, "node.exe");
     return {
       file: existsSync(siblingNode) ? siblingNode : "node",
       argsPrefix: [codexJs],
     };
   }
-
   return null;
 }
 
 function parseArgs(argv) {
   const parsed = {};
-
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--") {
-      continue;
-    }
-
-    if (!arg.startsWith("--")) {
-      fail(`Unexpected argument: ${arg}`);
-    }
-
+    if (arg === "--") continue;
+    if (!arg.startsWith("--")) fail(`Unexpected argument: ${arg}`);
     const [rawKey, inlineValue] = arg.slice(2).split("=", 2);
     if (rawKey === "dry-run") {
       parsed[rawKey] = true;
       continue;
     }
-
     const value = inlineValue ?? argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      fail(`Missing value for --${rawKey}`);
-    }
-
+    if (!value || value.startsWith("--")) fail(`Missing value for --${rawKey}`);
     parsed[rawKey] = value;
-    if (inlineValue === undefined) {
-      index += 1;
-    }
+    if (inlineValue === undefined) index += 1;
   }
-
   return parsed;
-}
-
-function slugify(value) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "-")
-    .replace(/^-|-$/gu, "")
-    .slice(0, 48);
-}
-
-function truncate(value, maxLength) {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function fail(message) {

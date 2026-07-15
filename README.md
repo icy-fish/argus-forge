@@ -33,13 +33,13 @@ pnpm issues:codex
 
 The workflow uses the local `gh`, `codex`, and `git` commands to:
 
-1. find open issues in `icy-fish/argus-forge` created in the last 14 days by `icy-fish` with no assignees and no labels;
-2. create a clean temporary Git worktree for each issue;
-3. send each issue description and comments to `codex exec`;
-4. label the issue `doing` and assign it to `icy-fish`;
-5. commit Codex changes to an issue branch, push it, and open a PR that references the issue.
+1. find open issues in `icy-fish/argus-forge` created in the last 7 days with no assignees and no labels;
+2. clone or refresh a reusable checkout of the repository's latest default branch under the system temp directory;
+3. label each issue `doing` and assign it to `icy-fish`;
+4. run Codex in Plan mode and a read-only sandbox to either produce a grounded implementation plan or questions for every unclear requirement;
+5. comment the analysis and Codex session ID on the issue, then add the `review needed` label.
 
-Local changes in the main checkout are ignored because issue implementation happens in isolated worktrees under the system temp directory by default.
+The workflow never edits the analysis checkout, commits code, pushes branches, or opens pull requests.
 
 Preview matching issues without changing GitHub or git state:
 
@@ -50,7 +50,7 @@ pnpm issues:codex -- --dry-run
 Useful options:
 
 ```bash
-pnpm issues:codex -- --days 7 --limit 20 --base main --codex-model gpt-5 --worktree-dir D:\tmp\argus-forge-worktrees
+pnpm issues:codex -- --repo icy-fish/argus-forge --days 7 --limit 20 --base main --codex-model gpt-5 --workspace-dir D:\tmp\argus-forge-analysis
 ```
 
 Useful API checks:
