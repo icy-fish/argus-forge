@@ -7,53 +7,10 @@ import MetricCard from "../components/MetricCard";
 import ToolUsageChart from "../components/charts/ToolUsageChart";
 import TraceTimeline from "../components/TraceTimeline";
 import { formatCurrency, formatDuration, formatNumber } from "../types";
-
-type LlmMessage = {
-  index: number;
-  role: string;
-  content: string;
-};
+import { isRecord, newRequestMessages, previousRequestMessages, requestMessages, textFromContent, type LlmMessage } from "./llmRequestMessages";
 
 function flattenSpans(spans: TraceSpan[]): TraceSpan[] {
   return spans.flatMap((span) => [span, ...flattenSpans(span.children)]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function textFromContent(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        if (typeof item === "string") return item;
-        if (isRecord(item)) {
-          if (item.type === "toolCall") return JSON.stringify(item, null, 2);
-          return textFromContent(item.text ?? item.thinking ?? item.content ?? item.input ?? item.output);
-        }
-        return textFromContent(item);
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (isRecord(value)) return textFromContent(value.text ?? value.content ?? value.input ?? value.output ?? JSON.stringify(value, null, 2));
-  return "";
-}
-
-function messagesFromPreview(preview: unknown): LlmMessage[] {
-  const source = Array.isArray(preview) ? preview : isRecord(preview) ? preview.messages : undefined;
-  if (!Array.isArray(source)) return [];
-
-  return source
-    .map((message, index) => {
-      const role = isRecord(message) && typeof message.role === "string" ? message.role : `message ${index + 1}`;
-      const content = isRecord(message) ? textFromContent(message.content ?? message.text ?? message.parts) : textFromContent(message);
-      return { index, role, content };
-    })
-    .filter((message) => message.content.length > 0);
 }
 
 function responseTextFromPreview(preview: unknown): string {
@@ -73,32 +30,36 @@ function responseTextFromPreview(preview: unknown): string {
   return textFromContent(preview);
 }
 
-function LlmRequestDetail({ span }: { span: TraceSpan }) {
+function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previousMessages?: LlmMessage[] }) {
   if (span.type !== "llm" || !isRecord(span.requestMetadata)) return null;
 
-  const requestPreview = span.requestMetadata.requestPreview;
   const responsePreview = span.requestMetadata.responsePreview;
-  const messages = messagesFromPreview(requestPreview);
+  const allMessages = requestMessages(span);
+  const messages = newRequestMessages(allMessages, previousMessages);
   const responseText = responseTextFromPreview(responsePreview);
 
-  if (!messages.length && !responseText) return null;
+  if (!allMessages.length && !responseText) return null;
 
   return (
     <div className="llm-detail">
-      {messages.length ? (
+      {allMessages.length ? (
         <section>
           <h3>LLM Request</h3>
-          <ol className="llm-message-list">
-            {messages.map((message) => (
-              <li key={`${message.index}-${message.role}`} className="llm-message">
-                <div className="llm-message-header">
-                  <span>{message.index + 1}</span>
-                  <strong>{message.role}</strong>
-                </div>
-                <p>{message.content}</p>
-              </li>
-            ))}
-          </ol>
+          {messages.length ? (
+            <ol className="llm-message-list">
+              {messages.map((message) => (
+                <li key={`${message.index}-${message.role}`} className="llm-message">
+                  <div className="llm-message-header">
+                    <span>{message.index + 1}</span>
+                    <strong>{message.role}</strong>
+                  </div>
+                  <p>{message.content}</p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>No new messages</p>
+          )}
         </section>
       ) : null}
       {responseText ? (
@@ -172,6 +133,7 @@ export default function SessionDetailPage() {
   const totals = metrics.data?.data;
   const rawEvents = useMemo(() => selectedSpan?.events ?? timeline.data?.data.events ?? [], [selectedSpan, timeline.data?.data.events]);
   const toolMetrics = useMemo(() => toToolMetrics(timeline.data?.data.spans ?? []), [timeline.data?.data.spans]);
+  const previousLlmMessages = useMemo(() => previousRequestMessages(timeline.data?.data.spans ?? []), [timeline.data?.data.spans]);
 
   return (
     <section>
@@ -239,7 +201,7 @@ export default function SessionDetailPage() {
                 <dt>Duration</dt><dd>{formatDuration(selectedSpan.durationMs)}</dd>
                 <dt>Events</dt><dd>{selectedSpan.events.length}</dd>
               </dl>
-              <LlmRequestDetail span={selectedSpan} />
+              <LlmRequestDetail span={selectedSpan} previousMessages={previousLlmMessages.get(selectedSpan.id)} />
               <ToolCallDetail span={selectedSpan} />
               <pre>{JSON.stringify(rawEvents.map((item) => item.raw), null, 2)}</pre>
             </>
