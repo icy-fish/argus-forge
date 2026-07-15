@@ -111,6 +111,34 @@ function LlmRequestDetail({ span }: { span: TraceSpan }) {
   );
 }
 
+function ToolCallDetail({ span }: { span: TraceSpan }) {
+  if (span.type !== "tool") return null;
+
+  const argumentsText = textFromContent(span.toolArguments);
+
+  return (
+    <div className="tool-call-detail">
+      <section>
+        <h3>Tool Arguments</h3>
+        <pre>{argumentsText || "No arguments recorded."}</pre>
+      </section>
+      <section>
+        <h3>Tool Output</h3>
+        <pre>{span.toolOutput || "No output recorded."}</pre>
+      </section>
+      {span.status === "failed" ? (
+        <section>
+          <h3>Failed Reason</h3>
+          <div className="tool-failure">
+            {span.toolErrorCode ? <strong>{span.toolErrorCode}: </strong> : null}
+            {span.errorMessage || "No failure reason recorded."}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function toToolMetrics(spans: TraceSpan[]): ToolMetricsItem[] {
   const groups = new Map<string, { toolName: string; count: number; errorCount: number; latencies: number[] }>();
   for (const span of flattenSpans(spans)) {
@@ -212,6 +240,7 @@ export default function SessionDetailPage() {
                 <dt>Events</dt><dd>{selectedSpan.events.length}</dd>
               </dl>
               <LlmRequestDetail span={selectedSpan} />
+              <ToolCallDetail span={selectedSpan} />
               <pre>{JSON.stringify(rawEvents.map((item) => item.raw), null, 2)}</pre>
             </>
           ) : (
