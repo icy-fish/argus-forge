@@ -8,11 +8,20 @@ function StatusIcon({ status }: { status: TraceSpan["status"] }) {
   return <Loader2 className="status running" size={18} />;
 }
 
-function SpanRow({ span, onSelect }: { span: TraceSpan; onSelect: (span: TraceSpan) => void }) {
+function SpanRow({
+  span,
+  selectedSpanId,
+  onSelect
+}: {
+  span: TraceSpan;
+  selectedSpanId?: string;
+  onSelect: (span: TraceSpan) => void;
+}) {
   const isTool = span.type === "tool";
+  const isSelected = span.id === selectedSpanId;
   return (
     <li>
-      <button className="span-row" onClick={() => onSelect(span)}>
+      <button className={`span-row${isSelected ? " selected" : ""}`} aria-pressed={isSelected} onClick={() => onSelect(span)}>
         <span className="span-kind">{isTool ? <Hammer size={16} /> : <Bot size={16} />}</span>
         <span className="span-main">
           <span className="span-name">{span.name}</span>
@@ -28,7 +37,7 @@ function SpanRow({ span, onSelect }: { span: TraceSpan; onSelect: (span: TraceSp
       {span.children.length ? (
         <ol className="span-children">
           {span.children.map((child) => (
-            <SpanRow key={child.id} span={child} onSelect={onSelect} />
+            <SpanRow key={child.id} span={child} selectedSpanId={selectedSpanId} onSelect={onSelect} />
           ))}
         </ol>
       ) : null}
@@ -36,12 +45,20 @@ function SpanRow({ span, onSelect }: { span: TraceSpan; onSelect: (span: TraceSp
   );
 }
 
-export default function TraceTimeline({ spans, onSelect }: { spans: TraceSpan[]; onSelect: (span: TraceSpan) => void }) {
+export default function TraceTimeline({
+  spans,
+  selectedSpanId,
+  onSelect
+}: {
+  spans: TraceSpan[];
+  selectedSpanId?: string;
+  onSelect: (span: TraceSpan) => void;
+}) {
   if (!spans.length) return <div className="empty-state">No trace spans have been recorded for this session.</div>;
   return (
     <ol className="trace-timeline">
       {spans.map((span) => (
-        <SpanRow key={span.id} span={span} onSelect={onSelect} />
+        <SpanRow key={span.id} span={span} selectedSpanId={selectedSpanId} onSelect={onSelect} />
       ))}
     </ol>
   );
