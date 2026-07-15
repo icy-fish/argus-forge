@@ -61,6 +61,16 @@ pnpm issues:codex:update-plans
 
 This workflow orders issue comments chronologically, resumes the latest recorded Codex analysis session when it is available locally, and otherwise rebuilds its context from the issue and comment history. Issues without newer feedback are skipped. It removes `comments to be resolved` before running Codex in Plan mode in the same reusable read-only workspace, posts the revised plan or clarification questions, and adds `review needed`. Pass the same `--repo`, `--base`, `--limit`, `--codex-model`, `--workspace-dir`, or `--dry-run` options as needed.
 
+Implement recently approved issues labeled `ready to go`:
+
+```bash
+pnpm issues:codex:implement -- --repo icy-fish/argus-forge
+```
+
+The implementation workflow finds open issues created within the last 7 days, removes `ready to go`, and creates a fresh isolated checkout from the latest `main` branch for each issue. Codex receives workspace write access and uses the issue description as the original requirement, the latest Codex analysis as its plan, and all later comments as additional requirements. It also checks whether project documentation needs updating and runs relevant verification. The workflow then commits the resulting changes, pushes a `codex/issue-...` feature branch, and opens a pull request to `main`. Issues without a Codex analysis comment are skipped without removing the label.
+
+Preview the selection with `--dry-run`. Use `--days`, `--limit`, `--label`, `--base`, `--codex-model`, or `--workspace-dir` to override defaults; `--workspace-dir` is a parent directory under which per-issue checkouts are created.
+
 Useful API checks:
 
 ```bash

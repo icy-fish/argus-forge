@@ -14,6 +14,8 @@ import {
   getIssue,
   parseArgs,
   prepareReusableCheckout,
+  latestAnalysisContext,
+  renderComments,
   run,
   runCodexAnalysis,
 } from "./github-issue-workflow-utils.mjs";
@@ -123,37 +125,7 @@ async function main() {
 }
 
 export function feedbackContext(comments) {
-  const ordered = [...comments].sort(
-    (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
-  );
-  let analysisIndex = -1;
-  let sessionId;
-  for (let index = 0; index < ordered.length; index += 1) {
-    const match = ordered[index].body?.match(
-      /Codex session:\s*`?([0-9a-z-]+)`?/iu,
-    );
-    if (match) {
-      analysisIndex = index;
-      sessionId = match[1];
-    }
-  }
-  if (analysisIndex < 0) return null;
-  return {
-    sessionId,
-    history: ordered.slice(0, analysisIndex + 1),
-    feedback: ordered.slice(analysisIndex + 1),
-  };
-}
-
-function renderComments(comments) {
-  return (
-    comments
-      .map(
-        (comment, index) =>
-          `### Comment ${index + 1} by ${comment.author?.login ?? "unknown"} at ${comment.createdAt}\n\n${comment.body || "(empty)"}`,
-      )
-      .join("\n\n") || "(none)"
-  );
+  return latestAnalysisContext(comments);
 }
 
 function buildPrompt({

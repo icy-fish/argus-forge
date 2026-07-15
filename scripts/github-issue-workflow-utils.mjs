@@ -25,6 +25,15 @@ export function defaultWorkspace(repo) {
   return join(tmpdir(), "github-issue-analysis", repo.replaceAll("/", "-"));
 }
 
+export function defaultImplementationWorkspace(repo, issueNumber) {
+  return join(
+    tmpdir(),
+    "github-issue-implementation",
+    repo.replaceAll("/", "-"),
+    `issue-${issueNumber}-${Date.now()}`,
+  );
+}
+
 export function getIssue(repo, number) {
   return JSON.parse(
     run("gh", [
@@ -70,6 +79,29 @@ export function prepareReusableCheckout({ repo, baseBranch, checkoutPath }) {
     cwd: checkoutPath,
   });
   console.log(`Reusable analysis checkout is current at ${checkoutPath}.`);
+}
+
+export function prepareIsolatedCheckout({
+  repo,
+  baseBranch,
+  checkoutPath,
+  branch,
+}) {
+  if (existsSync(checkoutPath))
+    throw new Error(`Implementation workspace already exists: ${checkoutPath}`);
+  mkdirSync(dirname(checkoutPath), { recursive: true });
+  run("gh", [
+    "repo",
+    "clone",
+    repo,
+    checkoutPath,
+    "--",
+    "--branch",
+    baseBranch,
+    "--single-branch",
+  ]);
+  run("git", ["checkout", "-b", branch], { cwd: checkoutPath });
+  console.log(`Isolated implementation checkout is ready at ${checkoutPath}.`);
 }
 
 export async function runCodexAnalysis({
@@ -142,6 +174,64 @@ export async function runCodexAnalysis({
   } finally {
     rmSync(outputFile, { force: true });
   }
+}
+
+export async function runCodexImplementation({ prompt, model, cwd, issueNumber }) {
+  const codexArgs = [
+    "exec",
+    "--cd",
+    cwd,
+    "--sandbox",
+    "workspace-write",
+    ...(model ? ["--model", model] : []),
+    "-",
+  ];
+  const child = spawn(
+    commands.codex.file,
+    [...commands.codex.argsPrefix, ...codexArgs],
+    { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false },
+  );
+  child.stdin.end(prompt);
+  const exitCode = await waitForProcess(child);
+  if (exitCode !== 0)
+    throw new Error(
+      `Codex implementation failed for #${issueNumber} with exit code ${exitCode}`,
+    );
+}
+
+export function latestAnalysisContext(comments) {
+  const ordered = [...comments].sort(
+    (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+  );
+  let analysisIndex = -1;
+  let sessionId;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const match = ordered[index].body?.match(
+      /Codex session:\s*`?([0-9a-z-]+)`?/iu,
+    );
+    if (match) {
+      analysisIndex = index;
+      sessionId = match[1];
+    }
+  }
+  if (analysisIndex < 0) return null;
+  return {
+    sessionId,
+    analysis: ordered[analysisIndex],
+    history: ordered.slice(0, analysisIndex + 1),
+    feedback: ordered.slice(analysisIndex + 1),
+  };
+}
+
+export function renderComments(comments) {
+  return (
+    comments
+      .map(
+        (comment, index) =>
+          `### Comment ${index + 1} by ${comment.author?.login ?? "unknown"} at ${comment.createdAt}\n\n${comment.body || "(empty)"}`,
+      )
+      .join("\n\n") || "(none)"
+  );
 }
 
 export function codexSessionExists(

@@ -16,6 +16,7 @@ test("selects feedback after the latest Codex analysis in chronological order", 
     comment("2026-01-02T00:00:00Z", "Codex session: first-session"),
   ]);
   assert.equal(result.sessionId, "second-session");
+  assert.equal(result.analysis.body, "Codex session: `second-session`");
   assert.deepEqual(
     result.feedback.map(({ body }) => body),
     ["new feedback"],
