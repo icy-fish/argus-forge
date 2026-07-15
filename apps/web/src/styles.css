@@ -71,8 +71,11 @@ th { color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing:
 .llm-message { border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px; background: #f8fafc; }
 .llm-message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #475569; font-size: 13px; text-transform: capitalize; }
 .llm-message-header span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; font-weight: 800; font-size: 12px; }
-.llm-message p, .llm-response { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #172033; font-size: 13px; line-height: 1.5; }
-.llm-response { border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px; background: #f8fafc; }
+.llm-message p, .llm-response-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #172033; font-size: 13px; line-height: 1.5; }
+.llm-response-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; min-width: 0; }
+.llm-response-item { border: 1px solid #dbe3ef; border-radius: 8px; padding: 12px; background: #f8fafc; min-width: 0; }
+.llm-response-type { display: inline-flex; margin-bottom: 8px; border-radius: 999px; padding: 3px 8px; background: #dbeafe; color: #1d4ed8; font-size: 11px; font-weight: 800; line-height: 1.4; overflow-wrap: anywhere; }
+.llm-response-item pre { margin: 0; max-width: 100%; max-height: 240px; overflow: auto; white-space: pre; }
 .tool-call-detail { display: grid; gap: 16px; margin-bottom: 16px; }
 .tool-call-detail h3 { margin: 0 0 10px; font-size: 15px; }
 .tool-call-detail pre { margin: 0; max-height: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }

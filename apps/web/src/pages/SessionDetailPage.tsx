@@ -8,26 +8,10 @@ import ToolUsageChart from "../components/charts/ToolUsageChart";
 import TraceTimeline from "../components/TraceTimeline";
 import { formatCurrency, formatDuration, formatNumber } from "../types";
 import { isRecord, newRequestMessages, previousRequestMessages, requestMessages, textFromContent, type LlmMessage } from "./llmRequestMessages";
+import { responseItemsFromPreview } from "./llmResponseContent";
 
 function flattenSpans(spans: TraceSpan[]): TraceSpan[] {
   return spans.flatMap((span) => [span, ...flattenSpans(span.children)]);
-}
-
-function responseTextFromPreview(preview: unknown): string {
-  if (isRecord(preview)) {
-    const choice = Array.isArray(preview.choices) && isRecord(preview.choices[0]) ? preview.choices[0] : undefined;
-    const choiceMessage = choice && isRecord(choice.message) ? choice.message : undefined;
-    return textFromContent(
-      preview.content ??
-        preview.text ??
-        preview.output ??
-        preview.message ??
-        choiceMessage?.content ??
-        choice?.text ??
-        preview
-    );
-  }
-  return textFromContent(preview);
 }
 
 function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previousMessages?: LlmMessage[] }) {
@@ -36,9 +20,9 @@ function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previou
   const responsePreview = span.requestMetadata.responsePreview;
   const allMessages = requestMessages(span);
   const messages = newRequestMessages(allMessages, previousMessages);
-  const responseText = responseTextFromPreview(responsePreview);
+  const responseItems = responseItemsFromPreview(responsePreview);
 
-  if (!allMessages.length && !responseText) return null;
+  if (!allMessages.length && !responseItems.length) return null;
 
   return (
     <div className="llm-detail">
@@ -62,10 +46,17 @@ function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previou
           )}
         </section>
       ) : null}
-      {responseText ? (
+      {responseItems.length ? (
         <section>
           <h3>LLM Response</h3>
-          <div className="llm-response">{responseText}</div>
+          <ol className="llm-response-list">
+            {responseItems.map((item) => (
+              <li key={item.index} className="llm-response-item">
+                <div className="llm-response-type">{item.type}</div>
+                {item.structured ? <pre>{item.content}</pre> : <div className="llm-response-content">{item.content}</div>}
+              </li>
+            ))}
+          </ol>
         </section>
       ) : null}
     </div>
