@@ -48,9 +48,9 @@ async function main() {
   const branch = `codex/issue-${issue.number}-${slug(issue.title)}`;
   const checkoutPath = workspaceRoot
     ? join(
-        workspaceRoot,
-        `${repo.replaceAll("/", "-")}-issue-${issue.number}-${Date.now()}`,
-      )
+      workspaceRoot,
+      `${repo.replaceAll("/", "-")}-issue-${issue.number}-${Date.now()}`,
+    )
     : defaultImplementationWorkspace(repo, issue.number);
   console.log(`\nImplementing #${issue.number}: ${issue.title}`);
   editIssueLabels(repo, issue.number, { remove: sourceLabel });
@@ -92,7 +92,7 @@ async function main() {
       "--title",
       `Implement #${issue.number}: ${issue.title}`,
       "--body",
-      `Implements #${issue.number}.\n\nGenerated from the approved Codex issue analysis and subsequent user feedback.`,
+      `Closes #${issue.number}.\n\nGenerated from the approved Codex issue analysis and subsequent user feedback.`,
     ],
   ).trim();
   console.log(`Created pull request for #${issue.number}: ${prUrl}`);
