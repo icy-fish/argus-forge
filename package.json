@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "test": "pnpm --filter @argus-forge/api test && pnpm --filter @argus-forge/web test",
     "issues:codex": "node scripts/handle-github-issues.mjs",
+    "issues:codex:update-plans": "node scripts/update-github-issue-plans.mjs",
     "db:migrate": "pnpm --filter @argus-forge/shared build && pnpm --filter @argus-forge/api db:migrate",
     "db:generate": "pnpm --filter @argus-forge/api db:generate",
     "seed": "pnpm --filter @argus-forge/api seed"

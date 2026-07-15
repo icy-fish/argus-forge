@@ -53,6 +53,14 @@ Useful options:
 pnpm issues:codex -- --repo icy-fish/argus-forge --days 7 --limit 20 --base main --codex-model gpt-5 --workspace-dir D:\tmp\argus-forge-analysis
 ```
 
+Update plans after reviewers add feedback and label an issue `comments to be resolved`:
+
+```bash
+pnpm issues:codex:update-plans
+```
+
+This workflow orders issue comments chronologically, resumes the latest recorded Codex analysis session when it is available locally, and otherwise rebuilds its context from the issue and comment history. Issues without newer feedback are skipped. It removes `comments to be resolved` before running Codex in Plan mode in the same reusable read-only workspace, posts the revised plan or clarification questions, and adds `review needed`. Pass the same `--repo`, `--base`, `--limit`, `--codex-model`, `--workspace-dir`, or `--dry-run` options as needed.
+
 Useful API checks:
 
 ```bash
