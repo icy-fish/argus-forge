@@ -30,7 +30,10 @@ function textFromContent(value: unknown): string {
     return value
       .map((item) => {
         if (typeof item === "string") return item;
-        if (isRecord(item)) return textFromContent(item.text ?? item.content ?? item.input ?? item.output);
+        if (isRecord(item)) {
+          if (item.type === "toolCall") return JSON.stringify(item, null, 2);
+          return textFromContent(item.text ?? item.thinking ?? item.content ?? item.input ?? item.output);
+        }
         return textFromContent(item);
       })
       .filter(Boolean)
