@@ -53,6 +53,9 @@ export type TraceSpan = {
   provider?: string | null;
   model?: string | null;
   toolName?: string | null;
+  toolArguments?: unknown;
+  toolOutput?: string | null;
+  toolErrorCode?: string | null;
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
