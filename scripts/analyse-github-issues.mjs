@@ -2,7 +2,6 @@
 
 import {
   DEFAULT_BASE_BRANCH,
-  DEFAULT_LIMIT,
   DEFAULT_REPO,
   addAnalysisComment,
   assertCommand,
@@ -18,61 +17,26 @@ import {
 } from "./github-issue-workflow-utils.mjs";
 
 const DEFAULT_ASSIGNEE = "icy-fish";
-const DEFAULT_DAYS = 7;
 const args = parseArgs(process.argv.slice(2));
 const repo = args.repo ?? DEFAULT_REPO;
+const issueNumber = Number(args.issue);
 const assignee = args.assignee ?? DEFAULT_ASSIGNEE;
 const doingLabel = args["doing-label"] ?? "doing";
 const reviewLabel = args["review-label"] ?? "review needed";
 const baseBranch = args.base ?? DEFAULT_BASE_BRANCH;
-const days = Number(args.days ?? DEFAULT_DAYS);
-const limit = Number(args.limit ?? DEFAULT_LIMIT);
 const checkoutPath = args["workspace-dir"] ?? defaultWorkspace(repo);
 const dryRun = Boolean(args["dry-run"]);
-if (!Number.isInteger(days) || days <= 0)
-  fail("--days must be a positive integer");
-if (!Number.isInteger(limit) || limit <= 0)
-  fail("--limit must be a positive integer");
-
 main().catch((error) =>
   fail(error instanceof Error ? error.message : String(error)),
 );
 
 async function main() {
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0)
+    fail("--issue must be a positive integer");
   assertCommand("gh", ["--version"]);
-  const cutoff = new Date(Date.now() - days * 86_400_000);
-  const issues = JSON.parse(
-    run("gh", [
-      "issue",
-      "list",
-      "-R",
-      repo,
-      "--state",
-      "open",
-      "--search",
-      `created:>=${cutoff.toISOString().slice(0, 10)} no:assignee no:label`,
-      "--limit",
-      String(limit),
-      "--json",
-      "number,title,createdAt,state,assignees,labels,url",
-    ]),
-  ).filter(
-    (issue) =>
-      issue.state === "OPEN" &&
-      new Date(issue.createdAt) >= cutoff &&
-      issue.assignees.length === 0 &&
-      issue.labels.length === 0,
-  );
-  if (issues.length === 0) {
-    console.log("No matching issues found.");
-    return;
-  }
-  console.log(
-    `Found ${issues.length} matching issue${issues.length === 1 ? "" : "s"} in ${repo}.`,
-  );
+  const issue = getIssue(repo, issueNumber);
   if (dryRun) {
-    for (const issue of issues)
-      console.log(`#${issue.number}: ${issue.title} (${issue.url})`);
+    console.log(`#${issue.number}: analyze (${issue.url})`);
     return;
   }
 
@@ -87,36 +51,31 @@ async function main() {
   );
   prepareReusableCheckout({ repo, baseBranch, checkoutPath });
 
-  for (const summary of issues) {
-    const issue = getIssue(repo, summary.number);
-    console.log(`\nAnalyzing #${issue.number}: ${issue.title}`);
-    run("gh", [
-      "issue",
-      "edit",
-      String(issue.number),
-      "-R",
-      repo,
-      "--add-label",
-      doingLabel,
-      "--add-assignee",
-      assignee,
-    ]);
-    const result = await runCodexAnalysis({
-      prompt: buildPrompt(issue),
-      model: args["codex-model"],
-      cwd: checkoutPath,
-      issueNumber: issue.number,
-    });
-    if (!result.sessionId || !result.content.trim())
-      throw new Error(
-        `Codex produced an incomplete analysis for #${issue.number}`,
-      );
-    addAnalysisComment(repo, issue.number, result);
-    editIssueLabels(repo, issue.number, { add: reviewLabel });
-    console.log(
-      `Posted analysis for #${issue.number} (Codex session ${result.sessionId}).`,
-    );
-  }
+  console.log(`\nAnalyzing #${issue.number}: ${issue.title}`);
+  run("gh", [
+    "issue",
+    "edit",
+    String(issue.number),
+    "-R",
+    repo,
+    "--add-label",
+    doingLabel,
+    "--add-assignee",
+    assignee,
+  ]);
+  const result = await runCodexAnalysis({
+    prompt: buildPrompt(issue),
+    model: args["codex-model"],
+    cwd: checkoutPath,
+    issueNumber: issue.number,
+  });
+  if (!result.sessionId || !result.content.trim())
+    throw new Error(`Codex produced an incomplete analysis for #${issue.number}`);
+  addAnalysisComment(repo, issue.number, result);
+  editIssueLabels(repo, issue.number, { add: reviewLabel });
+  console.log(
+    `Posted analysis for #${issue.number} (Codex session ${result.sessionId}).`,
+  );
 }
 
 function buildPrompt(issue) {

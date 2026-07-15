@@ -25,51 +25,49 @@ pnpm build
 
 ## GitHub Issue Handling Workflow
 
-Run the Codex issue workflow:
+Run the unified Codex issue workflow:
 
 ```bash
-pnpm issues:codex
+pnpm codex:handle-github-issue
 ```
 
-The workflow uses the local `gh`, `codex`, and `git` commands to:
+The command uses the local `gh`, `codex`, and `git` commands. It fetches open
+issues from `icy-fish/argus-forge` that were created within the last 7 days,
+then dispatches every matching issue in turn:
 
-1. find open issues in `icy-fish/argus-forge` created in the last 7 days with no assignees and no labels;
-2. clone or refresh a reusable checkout of the repository's latest default branch under the system temp directory;
-3. label each issue `doing` and assign it to `icy-fish`;
-4. run Codex in Plan mode and a read-only sandbox to either produce a grounded implementation plan or questions for every unclear requirement;
-5. comment the analysis and Codex session ID on the issue, then add the `review needed` label.
+1. Issues with no assignee and no label go to the analysis workflow. It labels
+   the issue `doing`, assigns it to `icy-fish`, runs Codex in Plan mode in a
+   reusable read-only checkout, posts the analysis, and adds `review needed`.
+2. Issues labeled `comments to be resolved` go to the plan-update workflow.
+   It resumes the latest recorded Codex session when possible, incorporates
+   comments posted after the latest analysis, posts the revised plan, and adds
+   `review needed`.
+3. Issues labeled `ready to go` go to the implementation workflow. It creates
+   an isolated worktree, runs Codex with workspace write access, verifies and
+   commits the changes, pushes a feature branch, and opens a pull request.
 
-The workflow never edits the analysis checkout, commits code, pushes branches, or opens pull requests.
+Issues that do not match one of these states are left unchanged. If both
+workflow labels are present, `comments to be resolved` takes precedence so
+review feedback is incorporated before implementation.
 
 Preview matching issues without changing GitHub or git state:
 
 ```bash
-pnpm issues:codex -- --dry-run
+pnpm codex:handle-github-issue -- --dry-run
 ```
 
 Useful options:
 
 ```bash
-pnpm issues:codex -- --repo icy-fish/argus-forge --days 7 --limit 20 --base main --codex-model gpt-5 --workspace-dir D:\tmp\argus-forge-analysis
+pnpm codex:handle-github-issue -- --repo icy-fish/argus-forge --days 7 --limit 20 --base main --codex-model gpt-5 --workspace-dir D:\tmp\argus-forge-workspaces
 ```
 
-Update plans after reviewers add feedback and label an issue `comments to be resolved`:
-
-```bash
-pnpm issues:codex:update-plans
-```
-
-This workflow orders issue comments chronologically, resumes the latest recorded Codex analysis session when it is available locally, and otherwise rebuilds its context from the issue and comment history. Issues without newer feedback are skipped. It removes `comments to be resolved` before running Codex in Plan mode in the same reusable read-only workspace, posts the revised plan or clarification questions, and adds `review needed`. Pass the same `--repo`, `--base`, `--limit`, `--codex-model`, `--workspace-dir`, or `--dry-run` options as needed.
-
-Implement recently approved issues labeled `ready to go`:
-
-```bash
-pnpm issues:codex:implement -- --repo icy-fish/argus-forge
-```
-
-The implementation workflow finds open issues created within the last 7 days, removes `ready to go`, and creates a fresh isolated Git worktree from the latest `main` branch for each issue. Reusable analysis checkouts and isolated implementation checkouts share a single repository clone per repository under the system temp directory. At most 20 isolated worktrees are retained per repository; when that limit is reached, worktrees at least one day old are removed first, followed by the oldest remaining worktree if necessary. Codex receives workspace write access and uses the issue description as the original requirement, the latest Codex analysis as its plan, and all later comments as additional requirements. It also checks whether project documentation needs updating and runs relevant verification. The workflow then commits the resulting changes, pushes a `codex/issue-...` feature branch, and opens a pull request to `main`. Issues without a Codex analysis comment are skipped without removing the label.
-
-Preview the selection with `--dry-run`. Use `--days`, `--limit`, `--label`, `--base`, `--codex-model`, or `--workspace-dir` to override defaults; `--workspace-dir` is a parent directory under which per-issue checkouts are created.
+Use `--repo` to select another GitHub project, `--days` and `--limit` to adjust
+the single fetch, and `--base`, `--codex-model`, `--workspace-dir`,
+`--assignee`, `--doing-label`, or `--review-label` to configure the dispatched
+workflows. `--workspace-dir` is reused directly for analysis and plan updates;
+implementation creates a separate per-issue checkout beneath it. At most 20
+isolated implementation worktrees are retained per repository.
 
 Useful API checks:
 
