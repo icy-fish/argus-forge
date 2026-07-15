@@ -6,14 +6,17 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const DEFAULT_REPO = "icy-fish/argus-forge";
 export const DEFAULT_BASE_BRANCH = "main";
 export const DEFAULT_LIMIT = 100;
 export const MAX_COMMENT_LENGTH = 60_000;
+export const MAX_ISOLATED_CHECKOUTS = 20;
+const ISOLATED_CHECKOUT_MAX_AGE_MS = 86_400_000;
 
 export const commands = {
   gh: resolveCommand("gh"),
@@ -49,35 +52,41 @@ export function getIssue(repo, number) {
 }
 
 export function prepareReusableCheckout({ repo, baseBranch, checkoutPath }) {
-  mkdirSync(dirname(checkoutPath), { recursive: true });
-  if (!existsSync(join(checkoutPath, ".git"))) {
-    if (existsSync(checkoutPath))
+  const repositoryPath = prepareLocalRepository(repo, baseBranch);
+  if (
+    existsSync(checkoutPath) &&
+    !isManagedWorktree(repositoryPath, checkoutPath)
+  ) {
+    const gitDirectory = join(checkoutPath, ".git");
+    if (!existsSync(gitDirectory))
       throw new Error(
         `Reusable workspace exists but is not a Git checkout: ${checkoutPath}`,
       );
-    run("gh", ["repo", "clone", repo, checkoutPath, "--", "--no-checkout"]);
-  } else {
     const origin = run("git", ["remote", "get-url", "origin"], {
       cwd: checkoutPath,
     }).trim();
     if (
-      !origin
-        .toLowerCase()
-        .replace(/\.git$/u, "")
-        .endsWith(repo.toLowerCase())
-    ) {
+      !origin.toLowerCase().replace(/\.git$/u, "").endsWith(repo.toLowerCase())
+    )
       throw new Error(
         `Reusable workspace origin does not match ${repo}: ${origin}`,
       );
-    }
+    rmSync(checkoutPath, { recursive: true, force: true });
   }
-  run("git", ["fetch", "origin", baseBranch, "--prune"], { cwd: checkoutPath });
-  run("git", ["checkout", "-B", baseBranch, `origin/${baseBranch}`], {
-    cwd: checkoutPath,
-  });
-  run("git", ["reset", "--hard", `origin/${baseBranch}`], {
-    cwd: checkoutPath,
-  });
+  if (!existsSync(checkoutPath)) {
+    mkdirSync(dirname(checkoutPath), { recursive: true });
+    run(
+      "git",
+      ["worktree", "add", "--detach", checkoutPath, `origin/${baseBranch}`],
+      { cwd: repositoryPath },
+    );
+  } else {
+    assertManagedWorktree(repositoryPath, checkoutPath, "Reusable workspace");
+    run("git", ["reset", "--hard", `origin/${baseBranch}`], {
+      cwd: checkoutPath,
+    });
+    run("git", ["clean", "-fd"], { cwd: checkoutPath });
+  }
   console.log(`Reusable analysis checkout is current at ${checkoutPath}.`);
 }
 
@@ -89,19 +98,120 @@ export function prepareIsolatedCheckout({
 }) {
   if (existsSync(checkoutPath))
     throw new Error(`Implementation workspace already exists: ${checkoutPath}`);
+  const repositoryPath = prepareLocalRepository(repo, baseBranch);
+  enforceIsolatedCheckoutLimit(repositoryPath);
   mkdirSync(dirname(checkoutPath), { recursive: true });
-  run("gh", [
-    "repo",
-    "clone",
-    repo,
-    checkoutPath,
-    "--",
-    "--branch",
-    baseBranch,
-    "--single-branch",
-  ]);
-  run("git", ["checkout", "-b", branch], { cwd: checkoutPath });
+  run(
+    "git",
+    ["worktree", "add", "-b", branch, checkoutPath, `origin/${baseBranch}`],
+    { cwd: repositoryPath },
+  );
+  const registry = readIsolatedRegistry(repositoryPath);
+  registry.push({ path: checkoutPath, createdAt: Date.now() });
+  writeIsolatedRegistry(repositoryPath, registry);
   console.log(`Isolated implementation checkout is ready at ${checkoutPath}.`);
+}
+
+function prepareLocalRepository(repo, baseBranch) {
+  const repositoryPath = join(
+    tmpdir(),
+    "github-issue-repositories",
+    repo.replaceAll("/", "-"),
+  );
+  mkdirSync(dirname(repositoryPath), { recursive: true });
+  if (!existsSync(join(repositoryPath, ".git"))) {
+    if (existsSync(repositoryPath))
+      throw new Error(
+        `Repository cache exists but is not a Git checkout: ${repositoryPath}`,
+      );
+    run("gh", ["repo", "clone", repo, repositoryPath, "--", "--no-checkout"]);
+  } else {
+    const origin = run("git", ["remote", "get-url", "origin"], {
+      cwd: repositoryPath,
+    }).trim();
+    if (
+      !origin.toLowerCase().replace(/\.git$/u, "").endsWith(repo.toLowerCase())
+    )
+      throw new Error(`Repository cache origin does not match ${repo}: ${origin}`);
+  }
+  run("git", ["fetch", "origin", baseBranch, "--prune"], { cwd: repositoryPath });
+  run("git", ["worktree", "prune"], { cwd: repositoryPath });
+  return repositoryPath;
+}
+
+function assertManagedWorktree(repositoryPath, checkoutPath, description) {
+  if (!existsSync(join(checkoutPath, ".git")))
+    throw new Error(
+      `${description} exists but is not a Git worktree: ${checkoutPath}`,
+    );
+  if (!isManagedWorktree(repositoryPath, checkoutPath))
+    throw new Error(
+      `${description} does not belong to the repository cache: ${checkoutPath}`,
+    );
+}
+
+function isManagedWorktree(repositoryPath, checkoutPath) {
+  if (!existsSync(join(checkoutPath, ".git"))) return false;
+  const commonDirectory = run(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    { cwd: checkoutPath },
+  ).trim();
+  return (
+    resolve(commonDirectory).toLowerCase() ===
+    resolve(repositoryPath, ".git").toLowerCase()
+  );
+}
+
+function enforceIsolatedCheckoutLimit(repositoryPath, now = Date.now()) {
+  let registry = readIsolatedRegistry(repositoryPath).filter(({ path }) =>
+    existsSync(path),
+  );
+  const removals = isolatedCheckoutsToRemove(registry, now);
+  for (const checkout of removals)
+    removeIsolatedWorktree(repositoryPath, checkout.path);
+  registry = registry.filter((checkout) => !removals.includes(checkout));
+  writeIsolatedRegistry(repositoryPath, registry);
+}
+
+export function isolatedCheckoutsToRemove(registry, now = Date.now()) {
+  if (registry.length < MAX_ISOLATED_CHECKOUTS) return [];
+  const ordered = [...registry].sort((a, b) => a.createdAt - b.createdAt);
+  const removals = ordered.filter(
+    ({ createdAt }) => now - createdAt >= ISOLATED_CHECKOUT_MAX_AGE_MS,
+  );
+  const retained = ordered.filter((checkout) => !removals.includes(checkout));
+  while (retained.length >= MAX_ISOLATED_CHECKOUTS)
+    removals.push(retained.shift());
+  return removals;
+}
+
+function removeIsolatedWorktree(repositoryPath, checkoutPath) {
+  run("git", ["worktree", "remove", "--force", checkoutPath], {
+    cwd: repositoryPath,
+  });
+}
+
+function isolatedRegistryPath(repositoryPath) {
+  return join(repositoryPath, ".git", "argus-forge-isolated-worktrees.json");
+}
+
+function readIsolatedRegistry(repositoryPath) {
+  const path = isolatedRegistryPath(repositoryPath);
+  if (!existsSync(path)) return [];
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIsolatedRegistry(repositoryPath, registry) {
+  writeFileSync(
+    isolatedRegistryPath(repositoryPath),
+    `${JSON.stringify(registry, null, 2)}\n`,
+  );
 }
 
 export async function runCodexAnalysis({
