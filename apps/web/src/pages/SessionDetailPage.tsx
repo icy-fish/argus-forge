@@ -180,7 +180,7 @@ export default function SessionDetailPage() {
       <div className="detail-grid">
         <section className="panel">
           <h2>Trace Timeline</h2>
-          <TraceTimeline spans={timeline.data?.data.spans ?? []} onSelect={setSelected} />
+          <TraceTimeline spans={timeline.data?.data.spans ?? []} selectedSpanId={selectedSpan?.id} onSelect={setSelected} />
         </section>
         <section className="panel detail-panel">
           <h2>Selected Span</h2>
