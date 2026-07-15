@@ -37,7 +37,8 @@ then dispatches every matching issue in turn:
 
 1. Issues with no assignee and no label go to the analysis workflow. It labels
    the issue `doing`, assigns it to `icy-fish`, runs Codex in Plan mode in a
-   reusable read-only checkout, posts the analysis, and adds `review needed`.
+   reusable read-only checkout under `.codex-workspaces`, posts the analysis,
+   and adds `review needed`.
 2. Issues labeled `comments to be resolved` go to the plan-update workflow.
    It resumes the latest recorded Codex session when possible, incorporates
    comments posted after the latest analysis, posts the revised plan, and adds
@@ -67,7 +68,11 @@ the single fetch, and `--base`, `--codex-model`, `--workspace-dir`,
 `--assignee`, `--doing-label`, or `--review-label` to configure the dispatched
 workflows. `--workspace-dir` is reused directly for analysis and plan updates;
 implementation creates a separate per-issue checkout beneath it. At most 20
-isolated implementation worktrees are retained per repository.
+isolated implementation worktrees are retained per repository. Set
+`ARGUS_FORGE_CODEX_WORKSPACE_ROOT` to override the default ignored
+`.codex-workspaces` directory. The spawned Codex process receives a scoped Git
+`safe.directory` entry for its checkout, which is needed when the Windows
+sandbox account differs from the account that created the worktree.
 
 Useful API checks:
 

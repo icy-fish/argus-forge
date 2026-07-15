@@ -16,6 +16,7 @@ export const DEFAULT_BASE_BRANCH = "main";
 export const DEFAULT_LIMIT = 100;
 export const MAX_COMMENT_LENGTH = 60_000;
 export const MAX_ISOLATED_CHECKOUTS = 20;
+export const WORKTREE_PRUNE_ARGS = ["worktree", "prune", "--expire", "now"];
 const ISOLATED_CHECKOUT_MAX_AGE_MS = 86_400_000;
 
 export const commands = {
@@ -25,15 +26,26 @@ export const commands = {
 };
 
 export function defaultWorkspace(repo) {
-  return join(tmpdir(), "github-issue-analysis", repo.replaceAll("/", "-"));
+  return join(
+    codexWorkspaceRoot(),
+    "analysis",
+    repo.replaceAll("/", "-"),
+  );
 }
 
 export function defaultImplementationWorkspace(repo, issueNumber) {
   return join(
-    tmpdir(),
-    "github-issue-implementation",
+    codexWorkspaceRoot(),
+    "implementation",
     repo.replaceAll("/", "-"),
     `issue-${issueNumber}-${Date.now()}`,
+  );
+}
+
+function codexWorkspaceRoot() {
+  return resolve(
+    process.env.ARGUS_FORGE_CODEX_WORKSPACE_ROOT ??
+      join(process.cwd(), ".codex-workspaces"),
   );
 }
 
@@ -135,7 +147,9 @@ function prepareLocalRepository(repo, baseBranch) {
       throw new Error(`Repository cache origin does not match ${repo}: ${origin}`);
   }
   run("git", ["fetch", "origin", baseBranch, "--prune"], { cwd: repositoryPath });
-  run("git", ["worktree", "prune"], { cwd: repositoryPath });
+  run("git", WORKTREE_PRUNE_ARGS, {
+    cwd: repositoryPath,
+  });
   return repositoryPath;
 }
 
@@ -261,6 +275,7 @@ export async function runCodexAnalysis({
     [...commands.codex.argsPrefix, ...codexArgs],
     {
       cwd,
+      env: codexChildEnv(cwd),
       stdio: ["pipe", "pipe", "inherit"],
       shell: false,
     },
@@ -299,7 +314,12 @@ export async function runCodexImplementation({ prompt, model, cwd, issueNumber }
   const child = spawn(
     commands.codex.file,
     [...commands.codex.argsPrefix, ...codexArgs],
-    { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false },
+    {
+      cwd,
+      env: codexChildEnv(cwd),
+      stdio: ["pipe", "inherit", "inherit"],
+      shell: false,
+    },
   );
   child.stdin.end(prompt);
   const exitCode = await waitForProcess(child);
@@ -307,6 +327,17 @@ export async function runCodexImplementation({ prompt, model, cwd, issueNumber }
     throw new Error(
       `Codex implementation failed for #${issueNumber} with exit code ${exitCode}`,
     );
+}
+
+export function codexChildEnv(cwd, environment = process.env) {
+  const count = Number.parseInt(environment.GIT_CONFIG_COUNT ?? "0", 10);
+  const index = Number.isInteger(count) && count >= 0 ? count : 0;
+  return {
+    ...environment,
+    GIT_CONFIG_COUNT: String(index + 1),
+    [`GIT_CONFIG_KEY_${index}`]: "safe.directory",
+    [`GIT_CONFIG_VALUE_${index}`]: resolve(cwd),
+  };
 }
 
 export function latestAnalysisContext(comments) {

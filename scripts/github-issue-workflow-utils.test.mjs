@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MAX_ISOLATED_CHECKOUTS,
+  WORKTREE_PRUNE_ARGS,
+  codexChildEnv,
   isolatedCheckoutsToRemove,
 } from "./github-issue-workflow-utils.mjs";
 
 const DAY = 86_400_000;
+
+test("immediately prunes missing managed worktrees", () => {
+  assert.deepEqual(WORKTREE_PRUNE_ARGS, [
+    "worktree",
+    "prune",
+    "--expire",
+    "now",
+  ]);
+});
 
 test("does not evict an isolated checkout while capacity remains", () => {
   const registry = Array.from(
@@ -46,4 +57,17 @@ test("evicts the oldest isolated checkout when none are one day old", () => {
   );
 
   assert.deepEqual(isolatedCheckoutsToRemove(registry, now), [registry[0]]);
+});
+
+test("marks the Codex checkout as a safe Git directory", () => {
+  const environment = codexChildEnv("D:\\worktree", {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.autocrlf",
+    GIT_CONFIG_VALUE_0: "false",
+  });
+
+  assert.equal(environment.GIT_CONFIG_COUNT, "2");
+  assert.equal(environment.GIT_CONFIG_KEY_0, "core.autocrlf");
+  assert.equal(environment.GIT_CONFIG_KEY_1, "safe.directory");
+  assert.equal(environment.GIT_CONFIG_VALUE_1, "D:\\worktree");
 });
