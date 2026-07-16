@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Clock, DollarSign, Hammer, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, Clock, DollarSign, Hammer, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { ToolMetricsItem, TraceSpan } from "@argus-forge/shared";
@@ -15,12 +15,23 @@ function flattenSpans(spans: TraceSpan[]): TraceSpan[] {
 }
 
 function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previousMessages?: LlmMessage[] }) {
+  const [collapsedItems, setCollapsedItems] = useState<Set<string>>(() => new Set());
+
   if (span.type !== "llm" || !isRecord(span.requestMetadata)) return null;
 
   const responsePreview = span.requestMetadata.responsePreview;
   const allMessages = requestMessages(span);
   const messages = newRequestMessages(allMessages, previousMessages);
   const responseItems = responseItemsFromPreview(responsePreview);
+
+  const toggleItem = (key: string) => {
+    setCollapsedItems((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   if (!allMessages.length && !responseItems.length) return null;
 
@@ -31,15 +42,24 @@ function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previou
           <h3>LLM Request</h3>
           {messages.length ? (
             <ol className="llm-message-list">
-              {messages.map((message) => (
-                <li key={`${message.index}-${message.role}`} className="llm-message">
-                  <div className="llm-message-header">
-                    <span>{message.index + 1}</span>
-                    <strong>{message.role}</strong>
-                  </div>
-                  <p>{message.content}</p>
-                </li>
-              ))}
+              {messages.map((message) => {
+                const itemKey = `${span.id}-request-${message.index}-${message.role}`;
+                const collapsed = collapsedItems.has(itemKey);
+                return (
+                  <li key={`${message.index}-${message.role}`} className={`llm-message${collapsed ? " collapsed" : ""}`}>
+                    <div className="llm-message-header">
+                      <div className="llm-message-title">
+                        <span>{message.index + 1}</span>
+                        <strong>{message.role}</strong>
+                      </div>
+                      <button type="button" className="llm-fold-button" aria-expanded={!collapsed} aria-label={`${collapsed ? "Expand" : "Collapse"} request message ${message.index + 1}`} onClick={() => toggleItem(itemKey)}>
+                        {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                    </div>
+                    {!collapsed ? <p>{message.content}</p> : null}
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <p>No new messages</p>
@@ -50,12 +70,21 @@ function LlmRequestDetail({ span, previousMessages }: { span: TraceSpan; previou
         <section>
           <h3>LLM Response</h3>
           <ol className="llm-response-list">
-            {responseItems.map((item) => (
-              <li key={item.index} className="llm-response-item">
-                <div className="llm-response-type">{item.type}</div>
-                {item.structured ? <pre>{item.content}</pre> : <div className="llm-response-content">{item.content}</div>}
-              </li>
-            ))}
+            {responseItems.map((item) => {
+              const itemKey = `${span.id}-response-${item.index}`;
+              const collapsed = collapsedItems.has(itemKey);
+              return (
+                <li key={item.index} className={`llm-response-item${collapsed ? " collapsed" : ""}`}>
+                  <div className="llm-response-header">
+                    <div className="llm-response-type">{item.type}</div>
+                    <button type="button" className="llm-fold-button" aria-expanded={!collapsed} aria-label={`${collapsed ? "Expand" : "Collapse"} response item ${item.index + 1}`} onClick={() => toggleItem(itemKey)}>
+                      {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                  </div>
+                  {!collapsed ? (item.structured ? <pre>{item.content}</pre> : <div className="llm-response-content">{item.content}</div>) : null}
+                </li>
+              );
+            })}
           </ol>
         </section>
       ) : null}
