@@ -15,3 +15,4 @@ logs/
 *.log
 .codex-workspaces/
 .pi/extensions/argus-forge/argus-forge.settings.json
+.opencode/argus-forge.settings.json

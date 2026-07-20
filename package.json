@@ -8,6 +8,7 @@
     "build": "pnpm -r --filter @argus-forge/shared --filter @argus-forge/api --filter @argus-forge/web build",
     "typecheck": "pnpm -r typecheck",
     "typecheck:pi-extension": "pnpm --dir .pi/extensions/argus-forge typecheck",
+    "typecheck:opencode-plugin": "pnpm --dir .opencode typecheck",
     "lint": "pnpm -r lint",
     "format": "prettier --write .",
     "test": "pnpm --filter @argus-forge/api test && pnpm --filter @argus-forge/web test",
