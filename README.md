@@ -198,6 +198,16 @@ Optional settings:
 
 The extension sends `{ "events": [...] }` only to `POST /v1/ingest/events`. It redacts common secret-shaped fields and stores truncated previews for prompts, tool arguments, and tool results. The API remains unauthenticated, so run it only in a trusted local environment or behind your own access controls.
 
+## OpenCode Plugin
+
+The project-local plugin at `.opencode/plugins/argus-forge.ts` is automatically loaded by OpenCode when this repository is opened. OpenCode installs the pinned type/runtime dependency from `.opencode/package.json` on startup. No entry in `opencode.json` is required.
+
+The plugin reports session creation, updates, errors, deletion, and idle activity; assistant-message LLM request lifecycles and token usage; and paired tool executions. Session idle flushes pending events without ending the session, because it may resume. All payloads use the same `{ "events": [...] }` wire schema as the Pi extension and `packages/shared/src/events.ts`.
+
+Configuration precedence is environment variable, `.opencode/argus-forge.settings.json`, then the built-in default. Copy `.opencode/argus-forge.settings.example.json` to create persistent local settings (the resulting settings file is ignored by Git). The supported `ARGUS_FORGE_*` environment variables and queue defaults are the same as those listed for the Pi extension above, except `ARGUS_FORGE_AGENT_NAME` defaults to `opencode`. Set `ARGUS_FORGE_EMIT_STREAM_CHUNKS=true` to include bounded text-part previews.
+
+The plugin sends batches only to `http://localhost:4000/v1/ingest/events` by default. It bounds its in-memory queue, caps batches at 500 events, retries transient failures, redacts secret-shaped keys, and truncates stored previews. Telemetry delivery failures are logged and do not interrupt OpenCode. Because the ingest endpoint is unauthenticated and raw telemetry may contain project data, expose it only on a trusted local network or place it behind your own access controls.
+
 ## Dashboard
 
 Open `http://localhost:5173` for aggregate metrics and charts. Use `/sessions` to browse runs, then open a session detail page for per-session metrics, nested spans, and raw event JSON.
