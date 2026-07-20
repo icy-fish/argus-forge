@@ -113,15 +113,73 @@ export function prepareIsolatedCheckout({
   const repositoryPath = prepareLocalRepository(repo, baseBranch);
   enforceIsolatedCheckoutLimit(repositoryPath);
   mkdirSync(dirname(checkoutPath), { recursive: true });
-  run(
-    "git",
-    ["worktree", "add", "-b", branch, checkoutPath, `origin/${baseBranch}`],
-    { cwd: repositoryPath },
-  );
+  const baseRef = `origin/${baseBranch}`;
+  addIsolatedWorktree(repositoryPath, checkoutPath, branch, baseRef);
   const registry = readIsolatedRegistry(repositoryPath);
   registry.push({ path: checkoutPath, createdAt: Date.now() });
   writeIsolatedRegistry(repositoryPath, registry);
   console.log(`Isolated implementation checkout is ready at ${checkoutPath}.`);
+}
+
+export function addIsolatedWorktree(
+  repositoryPath,
+  checkoutPath,
+  branch,
+  baseRef,
+) {
+  const branchRef = `refs/heads/${branch}`;
+  const branchExists = gitRefExists(repositoryPath, branchRef);
+  if (branchExists) {
+    const attachedPath = worktreePathForBranch(repositoryPath, branchRef);
+    if (attachedPath)
+      throw new Error(
+        `Implementation branch ${branch} is already checked out at ${attachedPath}. ` +
+          "Finish or remove that worktree before retrying.",
+      );
+    const branchCommit = run("git", ["rev-parse", branchRef], {
+      cwd: repositoryPath,
+    }).trim();
+    const baseCommit = run("git", ["rev-parse", baseRef], {
+      cwd: repositoryPath,
+    }).trim();
+    if (branchCommit !== baseCommit)
+      throw new Error(
+        `Implementation branch ${branch} already contains work. ` +
+          "Review, publish, or remove it before retrying; it was left untouched.",
+      );
+    console.log(`Reusing stale implementation branch ${branch}.`);
+  }
+  run(
+    "git",
+    branchExists
+      ? ["worktree", "add", checkoutPath, branch]
+      : ["worktree", "add", "-b", branch, checkoutPath, baseRef],
+    { cwd: repositoryPath },
+  );
+}
+
+function gitRefExists(repositoryPath, ref) {
+  try {
+    run("git", ["show-ref", "--verify", "--quiet", ref], {
+      cwd: repositoryPath,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function worktreePathForBranch(repositoryPath, branchRef) {
+  const records = run("git", ["worktree", "list", "--porcelain"], {
+    cwd: repositoryPath,
+  }).trim().split(/\r?\n\r?\n/u);
+  for (const record of records) {
+    const lines = record.split(/\r?\n/u);
+    if (!lines.includes(`branch ${branchRef}`)) continue;
+    return lines.find((line) => line.startsWith("worktree "))?.slice(9);
+  }
+  return null;
 }
 
 function prepareLocalRepository(repo, baseBranch) {

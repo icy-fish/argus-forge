@@ -53,8 +53,10 @@ async function main() {
     )
     : defaultImplementationWorkspace(repo, issue.number);
   console.log(`\nImplementing #${issue.number}: ${issue.title}`);
-  editIssueLabels(repo, issue.number, { remove: sourceLabel });
   prepareIsolatedCheckout({ repo, baseBranch, checkoutPath, branch });
+  // Claim the issue only after checkout preparation succeeds. A checkout
+  // failure must leave the source label in place so the dispatcher can retry.
+  editIssueLabels(repo, issue.number, { remove: sourceLabel });
   await runCodexImplementation({
     prompt: buildPrompt(issue, context, checkoutPath),
     model: args["codex-model"],
